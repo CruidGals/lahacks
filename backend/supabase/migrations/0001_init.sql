@@ -1,0 +1,2 @@
+-- Initial scaffold migration placeholder
+-- Add bounties / claims / verifications tables in next pass.

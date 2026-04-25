@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bounty",
+  "type": "object",
+  "required": ["id", "title", "location", "rewardLamports", "status"],
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "location": {
+      "type": "object",
+      "required": ["lat", "lng"],
+      "properties": {
+        "lat": { "type": "number" },
+        "lng": { "type": "number" }
+      }
+    },
+    "rewardLamports": { "type": "integer", "minimum": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["open", "claimed", "verifying", "completed", "cancelled"]
+    }
+  }
+}
