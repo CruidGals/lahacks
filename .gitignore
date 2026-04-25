@@ -25,9 +25,7 @@ ai-service/models/
 *.log
 
 # local media fixtures/uploads
-data/videos/fixtures/*
 data/videos/incoming/*
-!data/videos/fixtures/.gitkeep
 !data/videos/incoming/.gitkeep
 
 # os/editor
