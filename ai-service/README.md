@@ -56,6 +56,16 @@ curl -X POST http://localhost:8000/verify \
 pytest -q
 ```
 
+## Object detection demo (with boxes)
+
+Run a quick detection pass on a local video and generate an annotated preview:
+
+```bash
+PYTHONPATH=. python scripts/object_detection_demo.py ../data/videos/fixtures/270video.MOV
+```
+
+This writes `artifacts/annotated_preview.mp4` and prints top detected objects.
+
 ## Deployment
 
 A `Dockerfile` is provided for Render / Fly / Railway. Set the env vars from `.env.example` in your deploy target.

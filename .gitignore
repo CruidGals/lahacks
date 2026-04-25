@@ -16,11 +16,19 @@ __pycache__/
 dist/
 build/
 coverage/
+artifacts/
+ai-service/models/
 .pytest_cache/
 .mypy_cache/
 
 # logs
 *.log
+
+# local media fixtures/uploads
+data/videos/fixtures/*
+data/videos/incoming/*
+!data/videos/fixtures/.gitkeep
+!data/videos/incoming/.gitkeep
 
 # os/editor
 .DS_Store
