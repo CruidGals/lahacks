@@ -6,7 +6,7 @@ This service powers bounty lifecycle routes, session GPS tracking, cleanup verif
 
 Required:
 
-- `SUPABASE_URL`
+- `SUPABASE_URL` (must be a valid `https://...` project URL)
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 Solana (devnet demo):
@@ -18,8 +18,21 @@ Solana (devnet demo):
 Verification service integration:
 
 - `AI_VERIFY_URL` (AI service `/verify` endpoint)
-- `INTERNAL_API_TOKEN` (optional; required in `x-internal-token` for internal callback route if set)
+- `INTERNAL_API_TOKEN` (optional; if set, required on `POST /api/cleanups/:id/verification-result` as `x-internal-token` **or** `Authorization: Bearer <token>`)
 - `BOUNTY_RADIUS_METERS` (optional, defaults to `75`)
+
+## Auth (API)
+
+Protected routes accept either:
+
+- `Authorization: Bearer <Supabase access JWT>` — user id is taken from the validated JWT and matched to `public.users.id`, or
+- `Authorization: Bearer <user uuid>` / `x-user-id: <user uuid>` — legacy dev flow (use only in trusted environments).
+
+World ID: clients call `POST /api/users/verify` with `{ "world_id_hash": "..." }` after IDKit/MiniKit proof; the backend sets `users.verified = true`. Posting bounties, claiming, starting sessions, pinging, and submitting cleanups require `verified`.
+
+## Public map listing
+
+`GET /api/bounties` is **unauthenticated** so the map can load pins without a session.
 
 ## Solana integration (hackathon scope)
 
@@ -31,8 +44,16 @@ Two backend functions are implemented in `src/lib/solana.ts`:
 - `releaseBountyToClaimer(bounty_id, recipient)`:
   - sends a devnet transfer from vault wallet to claimer wallet
   - returned signature is stored on `cleanups.payout_tx_sig`
+- On verification **failure**, `refundEscrowToPoster` sends the bounty lamports from the vault back to the **poster’s** `wallet_address`; the signature is stored inside `cleanups.verification_result` as `refund_tx_sig` (schema has no separate refund column).
 
-This provides a signed transaction audit trail in DB for both lock and payout.
+This provides a signed transaction audit trail in DB for lock, payout, and refund.
+
+## Verification callback idempotency
+
+`POST /api/cleanups/:id/verification-result` is safe to retry:
+
+- If the cleanup is already `verified` with a `payout_tx_sig`, a repeat success callback returns the same signature with `idempotent: true`.
+- If the cleanup is already `rejected`, a repeat failure callback returns `idempotent: true` without sending another refund.
 
 ## Trajectory analysis helper
 

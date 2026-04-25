@@ -21,6 +21,13 @@ type PayoutParams = {
   rewardLamports: number;
 };
 
+type RefundParams = {
+  bountyId: string;
+  posterWallet: string;
+  cleanupId: string;
+  rewardLamports: number;
+};
+
 function parseSecretKey(raw: string | undefined, envVarName: string): Uint8Array {
   if (!raw) {
     throw new Error(`Missing required env var ${envVarName}`);
@@ -112,6 +119,42 @@ export async function releaseBountyToClaimer(
 
   console.log(
     `release_bounty bounty_id=${params.bountyId} cleanup_id=${params.cleanupId} tx=${signature}`
+  );
+  return signature;
+}
+
+export async function refundEscrowToPoster(params: RefundParams): Promise<string> {
+  const connection = getConnection();
+  const vault = getVaultKeypair();
+  const recipient = new PublicKey(params.posterWallet);
+
+  const { value: latestBlockhash } = await connection.getLatestBlockhashAndContext(
+    'confirmed'
+  );
+
+  const balance = await connection.getBalance(vault.publicKey, 'confirmed');
+  if (balance < params.rewardLamports + 5_000) {
+    throw new Error('Vault has insufficient balance for refund + fees.');
+  }
+
+  const transferIx = SystemProgram.transfer({
+    fromPubkey: vault.publicKey,
+    toPubkey: recipient,
+    lamports: params.rewardLamports
+  });
+
+  const tx = new Transaction({
+    feePayer: vault.publicKey,
+    blockhash: latestBlockhash.blockhash,
+    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+  }).add(transferIx);
+
+  const signature = await sendAndConfirmTransaction(connection, tx, [vault], {
+    commitment: 'confirmed'
+  });
+
+  console.log(
+    `refund_bounty bounty_id=${params.bountyId} cleanup_id=${params.cleanupId} tx=${signature}`
   );
   return signature;
 }
