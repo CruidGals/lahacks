@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# env
+.env
+.env.*
+!.env.example
+
+# build artifacts
+dist/
+build/
+coverage/
+.pytest_cache/
+.mypy_cache/
+
+# logs
+*.log
+
+# os/editor
+.DS_Store
+.vscode/
+.idea/
