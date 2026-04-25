@@ -7,7 +7,10 @@ def test_health():
     client = TestClient(app)
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "ai-verifier"
+    assert "timestamp" in body
 
 
 def test_verify_returns_202_and_accepts_payload(monkeypatch):
@@ -17,9 +20,9 @@ def test_verify_returns_202_and_accepts_payload(monkeypatch):
         captured["cleanup_id"] = req.cleanup_id
         return None
 
-    from app import main
+    from app.api import routes as routes_module
 
-    monkeypatch.setattr(main, "run_verification", fake_run)
+    monkeypatch.setattr(routes_module, "run_verification", fake_run)
 
     payload = {
         "cleanup_id": "demo-1",

@@ -169,3 +169,34 @@ uvicorn app.main:app --reload --port 8000
 - **Person 2 backend**: implement `POST /cleanups/:cleanup_id/verification-result` that accepts the JSON in the locked `VerificationResult` schema and triggers Solana payout on `verified=true`.
 - **Demo prep**: pick `BACKEND_BASE_URL` for the deployed environment and (if used) set `BACKEND_INTERNAL_TOKEN`. Drop any of `fail-scene` / `fail-task` into the submission URL during demo to force the failure path.
 - **Stretch**: swap `BackgroundTasks` for a Redis/RQ worker if we move past hackathon scope and need durable retries across restarts.
+
+---
+
+## Merge log: Person 3A pull (Apr 25, 5:15 PM)
+
+### What landed in `ai-service/`
+- `app/api/routes.py` — a parallel scaffold APIRouter with its own `/health` (`{"ok": True, ...}`) and a `/verify` TODO endpoint using a different request shape (`bounty_id`, `claim_id`, `gps_points: list[dict]`).
+- `tests/test_health.py` — asserts `response.json()["ok"] is True`.
+- `.env.example` — `AI_SERVICE_PORT=8001` and `CLAUDE_API_KEY=` added at the top.
+- Person 3A did **not** replace the vision stubs in `app/vision.py` yet; those are still mine.
+
+### Compatibility issues found
+1. `app/api/routes.py` was never registered with the FastAPI app (dead code) and would have collided with my `/verify` and `/health` if it had been.
+2. The new `tests/test_health.py` would have **failed** against my old `{"status":"ok"}` shape.
+3. `BACKEND_BASE_URL` defaulted to `localhost:3000` but Person 2's backend (`backend/src/index.ts`) listens on `8080`.
+4. `Settings` model didn't accept `AI_SERVICE_PORT` / `CLAUDE_API_KEY` (silently ignored via `extra="ignore"`, but undocumented).
+5. Backend doesn't yet expose `/cleanups/:cleanup_id/verification-result` — my callback would 404 in real deployments. Out of my scope, called out in DESIGN_SPEC.md.
+
+### Fixes applied
+- Created `app/api/__init__.py` and rewrote `app/api/routes.py` as the **single registered router**, using my locked `VerifyRequest`/`VerificationResult` contract and wiring in the real `run_verification` background task.
+- Adopted Person 3A's richer `/health` shape `{"ok": True, "service": "ai-verifier", "timestamp": ...}` so `tests/test_health.py` passes (also matches `backend/src/routes/health.ts`).
+- Slimmed `app/main.py` to instantiate FastAPI + `app.include_router(api_router)`.
+- Added `ai_service_port` and `claude_api_key` to `Settings`; changed `backend_base_url` default to `http://localhost:8080`.
+- Updated `.env.example` (`BACKEND_BASE_URL=http://localhost:8080`).
+- Updated my old `tests/test_api.py::test_health` to match the new shape.
+- Wrote `tests/test_end_to_end.py` — comprehensive driver covering 10 scenarios via HTTP + respx-mocked backend, plus an interactive CLI mode (`python tests/test_end_to_end.py [all|--json]`).
+
+### Result
+- All **56 tests pass** (`pytest -q`): geo (6), fraud (10), scoring (6), pipeline (6), callback (5), api (3), health (1), end-to-end (19).
+- Live smoke test still passes (`GET /health`, `POST /verify`).
+- Interactive demo runner walks through happy + 9 failure scenarios with full callback payloads printed.

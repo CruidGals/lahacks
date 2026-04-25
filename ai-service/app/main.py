@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, Depends, FastAPI, status
+from fastapi import FastAPI
 
-from app.config import Settings, get_settings
-from app.models import VerifyAccepted, VerifyRequest
-from app.verify_pipeline import run_verification
+from app.api import router as api_router
+from app.config import get_settings
 
 
 @asynccontextmanager
@@ -28,33 +27,9 @@ app = FastAPI(
     description=(
         "Person 3B service. Receives /verify requests from the Node backend, "
         "runs Person 3A vision checks + fraud aggregation, scores the result, "
-        "and POSTs back to /cleanups/:id/verification-result."
+        "and POSTs back to /cleanups/:cleanup_id/verification-result."
     ),
     lifespan=lifespan,
 )
 
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post(
-    "/verify",
-    response_model=VerifyAccepted,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def verify(
-    req: VerifyRequest,
-    background_tasks: BackgroundTasks,
-    settings: Settings = Depends(get_settings),
-) -> VerifyAccepted:
-    """Accept a verification job and run it in the background.
-
-    The backend (Person 2) calls this after a claimer submits a cleanup video.
-    We respond `202 Accepted` immediately and POST the final result to
-    `BACKEND_BASE_URL/cleanups/{cleanup_id}/verification-result` once finished.
-    """
-
-    background_tasks.add_task(run_verification, req, settings)
-    return VerifyAccepted(cleanup_id=req.cleanup_id)
+app.include_router(api_router)

@@ -18,12 +18,23 @@ class Settings(BaseSettings):
     )
 
     backend_base_url: str = Field(
-        default="http://localhost:3000",
+        default="http://localhost:8080",
         description="Base URL of the Node/Express backend (Person 2).",
     )
     backend_internal_token: str | None = Field(
         default=None,
         description="Optional bearer token sent to the backend on callbacks.",
+    )
+
+    ai_service_port: int = Field(
+        default=8001,
+        ge=1,
+        le=65535,
+        description="Port this FastAPI service binds to (used by deploy scripts).",
+    )
+    claude_api_key: str | None = Field(
+        default=None,
+        description="API key forwarded to Person 3A's vision module when implemented.",
     )
 
     verification_confidence_threshold: float = Field(
