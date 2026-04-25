@@ -1,11 +1,30 @@
-const { Pool } = require("pg");
+const { createClient } = require("@supabase/supabase-js");
 
-const pool = new Pool({
-  host: process.env.DB_HOST || "localhost",
-  port: Number(process.env.DB_PORT || 5432),
-  user: process.env.DB_USER || "postgres",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "postgres",
-});
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-module.exports = pool;
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) are required.");
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+async function checkSupabaseConnection() {
+  const response = await fetch(`${supabaseUrl}/rest/v1/`, {
+    method: "GET",
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Supabase request failed (${response.status}): ${message}`);
+  }
+}
+
+module.exports = {
+  supabase,
+  checkSupabaseConnection,
+};
