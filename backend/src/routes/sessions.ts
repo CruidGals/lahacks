@@ -28,6 +28,11 @@ sessionRouter.post('/start', async (req, res) => {
   const user = await requireAuthUser(req, res);
   if (!user) return;
 
+  if (!user.verified) {
+    res.status(403).json({ error: 'World ID verification is required.' });
+    return;
+  }
+
   if (!supabase) {
     res.status(500).json({ error: 'Supabase is not configured.' });
     return;
@@ -93,6 +98,11 @@ sessionRouter.post('/:id/ping', async (req, res) => {
 
   const user = await requireAuthUser(req, res);
   if (!user) return;
+
+  if (!user.verified) {
+    res.status(403).json({ error: 'World ID verification is required.' });
+    return;
+  }
 
   const parsed = pingSchema.safeParse(req.body);
   if (!parsed.success) {

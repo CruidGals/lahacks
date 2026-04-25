@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
-import { releaseBountyToClaimer } from '../lib/solana.js';
+import { refundEscrowToPoster, releaseBountyToClaimer } from '../lib/solana.js';
 import { analyzeTrajectory } from '../lib/trajectory.js';
 
 export const cleanupRouter = Router();
@@ -66,6 +66,11 @@ async function postToAiVerifier(payload: VerificationPayload): Promise<void> {
 cleanupRouter.post('/', async (req, res) => {
   const user = await requireAuthUser(req, res);
   if (!user) return;
+
+  if (!user.verified) {
+    res.status(403).json({ error: 'World ID verification is required.' });
+    return;
+  }
 
   if (!supabase) {
     res.status(500).json({ error: 'Supabase is not configured.' });
@@ -228,6 +233,28 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
   const verificationJson = parsed.data as Record<string, unknown>;
 
   if (parsed.data.verified) {
+    if (cleanup.status === 'verified' && cleanup.payout_tx_sig) {
+      res.json({
+        ok: true,
+        verified: true,
+        payout_tx_sig: cleanup.payout_tx_sig,
+        idempotent: true
+      });
+      return;
+    }
+
+    if (cleanup.status === 'rejected') {
+      res.status(409).json({ error: 'Cleanup was already rejected.' });
+      return;
+    }
+
+    if (cleanup.status !== 'pending') {
+      res.status(409).json({
+        error: `Cleanup is not awaiting verification (status=${cleanup.status}).`
+      });
+      return;
+    }
+
     if (!bounty.claimer_id) {
       res.status(409).json({ error: 'Bounty has no claimer for payout.' });
       return;
@@ -248,12 +275,22 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       return;
     }
 
-    const payoutTxSig = await releaseBountyToClaimer({
-      bountyId: bounty.id,
-      recipientWallet: claimer.wallet_address,
-      cleanupId: cleanup.id,
-      rewardLamports: bounty.reward_lamports
-    });
+    let payoutTxSig: string;
+    try {
+      payoutTxSig = await releaseBountyToClaimer({
+        bountyId: bounty.id,
+        recipientWallet: claimer.wallet_address,
+        cleanupId: cleanup.id,
+        rewardLamports: bounty.reward_lamports
+      });
+    } catch (e) {
+      console.error('Payout transaction failed:', e);
+      res.status(502).json({
+        error: 'On-chain payout failed; bounty left unchanged. Retry callback after fixing wallet/RPC.',
+        details: e instanceof Error ? e.message : String(e)
+      });
+      return;
+    }
 
     const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
       supabase
@@ -291,12 +328,76 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
+  if (cleanup.status === 'rejected') {
+    res.json({
+      ok: true,
+      verified: false,
+      idempotent: true,
+      refund_status: 'escrow_lock_released'
+    });
+    return;
+  }
+
+  if (cleanup.status === 'verified') {
+    res.status(409).json({ error: 'Cleanup was already verified.' });
+    return;
+  }
+
+  if (cleanup.status !== 'pending') {
+    res.status(409).json({
+      error: `Cleanup is not awaiting verification (status=${cleanup.status}).`
+    });
+    return;
+  }
+
+  if (!bounty.poster_id) {
+    res.status(500).json({ error: 'Bounty has no poster for refund.' });
+    return;
+  }
+
+  const { data: poster, error: posterError } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', bounty.poster_id)
+    .maybeSingle();
+
+  if (posterError) {
+    res.status(500).json({ error: 'Failed to load poster for refund.' });
+    return;
+  }
+  if (!poster) {
+    res.status(404).json({ error: 'Poster user not found for refund.' });
+    return;
+  }
+
+  let refundTxSig: string;
+  try {
+    refundTxSig = await refundEscrowToPoster({
+      bountyId: bounty.id,
+      posterWallet: poster.wallet_address,
+      cleanupId: cleanup.id,
+      rewardLamports: bounty.reward_lamports
+    });
+  } catch (e) {
+    console.error('Refund transaction failed:', e);
+    res.status(502).json({
+      error: 'On-chain refund failed; claim lock not released. Retry later.',
+      details: e instanceof Error ? e.message : String(e)
+    });
+    return;
+  }
+
+  const verificationWithRefund = {
+    ...verificationJson,
+    refund_tx_sig: refundTxSig
+  };
+
   const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
     supabase
       .from('cleanups')
       .update({
         status: 'rejected',
-        verification_result: verificationJson,
+        verification_result: verificationWithRefund,
         confidence_score: parsed.data.confidence ?? null
       })
       .eq('id', cleanup.id),
@@ -325,6 +426,7 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
   res.json({
     ok: true,
     verified: false,
-    refund_status: 'escrow_lock_released'
+    refund_tx_sig: refundTxSig,
+    refund_status: 'escrow_refunded_to_poster'
   });
 });

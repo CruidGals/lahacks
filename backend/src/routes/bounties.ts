@@ -32,6 +32,11 @@ bountyRouter.post('/', async (req, res) => {
   const user = await requireAuthUser(req, res);
   if (!user) return;
 
+  if (!user.verified) {
+    res.status(403).json({ error: 'World ID verification is required.' });
+    return;
+  }
+
   if (!supabase) {
     res.status(500).json({ error: 'Supabase is not configured.' });
     return;
@@ -93,14 +98,6 @@ bountyRouter.post('/', async (req, res) => {
 });
 
 bountyRouter.get('/', async (req, res) => {
-  const user = await requireAuthUser(req, res);
-  if (!user) return;
-
-  if (!user.verified) {
-    res.status(403).json({ error: 'World ID verification is required.' });
-    return;
-  }
-
   if (!supabase) {
     res.status(500).json({ error: 'Supabase is not configured.' });
     return;
