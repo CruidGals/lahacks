@@ -63,6 +63,9 @@ export default function ProfilePage() {
   const [claimed, setClaimed] = useState<ClaimedBounty[] | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [linkingWallet, setLinkingWallet] = useState(false);
+  const [payoutDisplayMode, setPayoutDisplayMode] = useState<"SOL" | "WLD">(
+    "SOL"
+  );
   const { toast } = useToast();
   const inWorldApp = isWorldApp();
 
@@ -382,11 +385,37 @@ export default function ProfilePage() {
       <div className="px-4 mt-5">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold tracking-tight">Recent payouts</h2>
-          {user && (
-            <span className="text-[11px] text-[color:var(--color-muted)] tabular">
-              {user.recent_completed.length} total
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {user && (
+              <span className="text-[11px] text-[color:var(--color-muted)] tabular">
+                {user.recent_completed.length} total
+              </span>
+            )}
+            <div className="inline-flex rounded-full border border-[color:var(--color-border)] bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setPayoutDisplayMode("SOL")}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-colors ${
+                  payoutDisplayMode === "SOL"
+                    ? "bg-[color:var(--color-brand-600)] text-white"
+                    : "text-[color:var(--color-muted)]"
+                }`}
+              >
+                SOL
+              </button>
+              <button
+                type="button"
+                onClick={() => setPayoutDisplayMode("WLD")}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-colors ${
+                  payoutDisplayMode === "WLD"
+                    ? "bg-[color:var(--color-brand-600)] text-white"
+                    : "text-[color:var(--color-muted)]"
+                }`}
+              >
+                WLD
+              </button>
+            </div>
+          </div>
         </div>
         {!user && (
           <div className="grid gap-2">
@@ -422,9 +451,21 @@ export default function ProfilePage() {
                     {formatRelative(c.completed_at)}
                   </p>
                 </div>
-                <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)]">
-                  +{formatReward(c.reward, c.reward_currency)}
-                </span>
+                <div className="text-right">
+                  <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)]">
+                    +{formatReward(
+                      convertFromSolBaseline(c.reward, c.reward_currency, payoutDisplayMode),
+                      payoutDisplayMode
+                    )}
+                  </span>
+                  <p className="text-[10px] text-[color:var(--color-muted)]">
+                    from{" "}
+                    {formatReward(
+                      toSolBaseline(c.reward, c.reward_currency),
+                      "SOL"
+                    )}
+                  </p>
+                </div>
               </Card>
             ))}
           </div>
@@ -453,6 +494,23 @@ export default function ProfilePage() {
       </div>
     </div>
   );
+}
+
+function toSolBaseline(amount: number, currency: Currency): number {
+  // Legacy mis-labeled WLD amounts are actually SOL scaled by 1000.
+  // Example: 10.00 (tagged WLD) should be treated as 0.01 SOL.
+  return currency === "WLD" ? amount / 1000 : amount;
+}
+
+function convertFromSolBaseline(
+  amount: number,
+  sourceCurrency: Currency,
+  targetCurrency: Currency
+): number {
+  const sol = toSolBaseline(amount, sourceCurrency);
+  if (targetCurrency === "SOL") return sol;
+  const usd = rewardUsd(sol, "SOL");
+  return usd / SPOT_USD.WLD;
 }
 
 function CurrencyTile({

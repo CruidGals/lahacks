@@ -740,7 +740,7 @@ export async function getMe(): Promise<User> {
       balance_wld:
         typeof u.wallet?.balance_wld === "number"
           ? u.wallet.balance_wld
-          : (u.total_earned_wld ?? 0),
+          : undefined,
     },
     recent_completed: recentCompleted,
   };

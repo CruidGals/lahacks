@@ -80,7 +80,8 @@ leaderboardRouter.get('/', async (req, res) => {
       total_lamports_sol: 0,
       total_completed: 0
     };
-    if (row.reward_currency === 'SOL') {
+    // Legacy rows may have null `reward_currency`; those are SOL lamports.
+    if (row.reward_currency === 'SOL' || row.reward_currency === null) {
       existing.total_lamports_sol += row.reward_lamports;
     } else {
       existing.total_micro_wld += row.reward_lamports;

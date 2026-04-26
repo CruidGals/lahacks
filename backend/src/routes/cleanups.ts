@@ -396,7 +396,8 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       return;
     }
 
-    const currency = bounty.reward_currency ?? 'WLD';
+    // Legacy rows with null `reward_currency` are SOL.
+    const currency = bounty.reward_currency ?? 'SOL';
     let payoutTxSig: string;
     try {
       if (currency === 'SOL') {
@@ -513,7 +514,8 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
-  const refundCurrency = bounty.reward_currency ?? 'WLD';
+  // Legacy rows with null `reward_currency` are SOL.
+  const refundCurrency = bounty.reward_currency ?? 'SOL';
   let refundTxSig: string;
   try {
     if (refundCurrency === 'SOL') {

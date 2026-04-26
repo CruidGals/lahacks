@@ -28,6 +28,11 @@ function escrowLabel(b: Bounty | null): string {
     : "Releasing escrow on World Chain…";
 }
 
+function normalizedReward(amount: number, currency: Bounty["reward_currency"]): number {
+  // Temporary UI normalization: legacy WLD displays are 1000x too high.
+  return currency === "WLD" ? amount / 1000 : amount;
+}
+
 const STATIC_CHECK_LABELS = [
   "Receiving submission…",
   "Verifying GPS trajectory…",
@@ -94,12 +99,18 @@ export default function SubmittedPage({
 
   useEffect(() => {
     if (result?.passed && bounty) {
-      toast(`+${formatReward(bounty.reward, bounty.reward_currency)} paid out`, {
+      toast(
+        `+${formatReward(
+          normalizedReward(bounty.reward, bounty.reward_currency),
+          bounty.reward_currency
+        )} paid out`,
+        {
         variant: "success",
         description: result.reward_tx_signature
           ? `Tx ${result.reward_tx_signature.slice(0, 12)}…`
           : undefined,
-      });
+        }
+      );
     }
   }, [result, bounty, toast]);
 
@@ -228,7 +239,10 @@ function SuccessState({
         <div>
           <Badge tone="brand" size="sm">Paid out</Badge>
           <h2 className="text-[22px] font-semibold tracking-tight mt-1.5 leading-tight">
-            +{formatReward(bounty.reward, bounty.reward_currency)}
+            +{formatReward(
+              normalizedReward(bounty.reward, bounty.reward_currency),
+              bounty.reward_currency
+            )}
           </h2>
         </div>
       </div>

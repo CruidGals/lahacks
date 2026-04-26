@@ -90,7 +90,8 @@ export type User = {
     /** Linked World App wallet for WLD payouts/refunds (null if not linked). */
     world_address: string | null;
     balance_sol: number;
-    balance_wld: number;
+    /** Live on-chain WLD balance; undefined when unavailable. */
+    balance_wld?: number;
   };
   recent_completed: Array<{
     bounty_id: string;

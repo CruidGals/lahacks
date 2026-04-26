@@ -224,7 +224,7 @@ usersRouter.get('/me', async (req, res) => {
   let totalEarnedWld = 0;
   let totalEarnedSol = 0;
   for (const bounty of completed) {
-    if (bounty.reward_currency === 'SOL') {
+    if (bounty.reward_currency === 'SOL' || bounty.reward_currency === null) {
       totalEarnedSol += rewardLamportsToSol(bounty.reward_lamports);
     } else {
       totalEarnedWld += rewardMicroToWld(bounty.reward_lamports);
@@ -232,7 +232,7 @@ usersRouter.get('/me', async (req, res) => {
   }
 
   const recent = completed.slice(0, 8).map((bounty) => {
-    const isSol = bounty.reward_currency === 'SOL';
+    const isSol = bounty.reward_currency === 'SOL' || bounty.reward_currency === null;
     const human = isSol
       ? rewardLamportsToSol(bounty.reward_lamports)
       : rewardMicroToWld(bounty.reward_lamports);
@@ -266,10 +266,10 @@ usersRouter.get('/me', async (req, res) => {
     );
   }
 
-  // Best-effort live WLD balance read off World Chain. We fall back to the
-  // user's lifetime earnings so the UI still has *something* to render when
-  // the wallet isn't linked or the RPC is unreachable.
-  let walletBalanceWld = Number(totalEarnedWld.toFixed(4));
+  // Best-effort live WLD balance read off World Chain. If unavailable (wallet
+  // not linked, invalid address, RPC error), we intentionally return undefined
+  // instead of a derived earnings number.
+  let walletBalanceWld: number | undefined;
   if (user.world_address) {
     try {
       walletBalanceWld = await getWldBalance(user.world_address);

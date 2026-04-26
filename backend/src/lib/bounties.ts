@@ -79,7 +79,9 @@ export function computeUrgencyScore(bounty: Bounty): number {
     ? new Date(bounty.created_at).getTime()
     : Date.now();
   const ageHours = Math.max(0, (Date.now() - createdAtMs) / (1000 * 60 * 60));
-  const currency: Currency = bounty.reward_currency ?? 'WLD';
+  // Legacy rows may have null `reward_currency`; those historical rewards were
+  // stored as SOL lamports, so default to SOL for backward compatibility.
+  const currency: Currency = bounty.reward_currency ?? 'SOL';
   const human = smallestUnitsToHuman(currency, bounty.reward_lamports);
   const rewardComponent = Math.min(
     50,
@@ -113,7 +115,8 @@ export function rewardFieldsFor(bounty: Bounty): {
   reward_wld?: number;
   reward_sol?: number;
 } {
-  const currency: Currency = bounty.reward_currency ?? 'WLD';
+  // Legacy rows may have null `reward_currency`; treat them as SOL.
+  const currency: Currency = bounty.reward_currency ?? 'SOL';
   const human = smallestUnitsToHuman(currency, bounty.reward_lamports);
   return currency === 'SOL'
     ? { reward_currency: 'SOL', reward: human, reward_sol: human }
