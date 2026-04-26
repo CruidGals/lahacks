@@ -20,10 +20,26 @@ import {
 } from "../_components/icons";
 import { useGeolocation } from "../../lib/useGeolocation";
 import { DEFAULT_LOCATION } from "../../lib/mock-data";
-import { postBounty } from "../../lib/api";
-import type { Bounty, BountyCategory } from "../../lib/types";
+import {
+  confirmWldBounty,
+  createWldBountyIntent,
+  postBounty,
+} from "../../lib/api";
+import type { Bounty, BountyCategory, Currency } from "../../lib/types";
 import { useToast } from "../_components/Toast";
-import { categoryLabel, formatUsd } from "../../lib/format";
+import {
+  categoryLabel,
+  formatReward,
+  formatUsd,
+  rewardUnit,
+  rewardUsd,
+} from "../../lib/format";
+import {
+  isWorldApp,
+  MiniKitNotInstalledError,
+  MiniKitPayError,
+  payWldBounty,
+} from "../../lib/minikit";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -36,7 +52,15 @@ const CATEGORIES: { id: BountyCategory; emoji: string; label: string }[] = [
   { id: "other", emoji: "✨", label: "Other" },
 ];
 
-const REWARD_QUICK = [0.05, 0.1, 0.2, 0.35, 0.5];
+const REWARD_QUICK: Record<Currency, number[]> = {
+  SOL: [0.05, 0.1, 0.2, 0.35, 0.5],
+  WLD: [0.5, 1, 2, 5, 10],
+};
+
+const REWARD_DEFAULT: Record<Currency, string> = {
+  SOL: "0.20",
+  WLD: "1.00",
+};
 
 export default function PostBountyPage() {
   const router = useRouter();
@@ -48,7 +72,8 @@ export default function PostBountyPage() {
   const [category, setCategory] = useState<BountyCategory>("litter");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [reward, setReward] = useState<string>("0.20");
+  const [currency, setCurrency] = useState<Currency>("WLD");
+  const [reward, setReward] = useState<string>(REWARD_DEFAULT.WLD);
   const [referenceCaptured, setReferenceCaptured] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<Bounty | null>(null);
@@ -61,7 +86,15 @@ export default function PostBountyPage() {
   }, [geo.location]);
 
   const rewardNum = parseFloat(reward);
-  const usdEstimate = isFinite(rewardNum) ? Math.round(rewardNum * 153) : 0;
+  const usdEstimate = isFinite(rewardNum)
+    ? Math.round(rewardUsd(rewardNum, currency))
+    : 0;
+
+  const onChangeCurrency = (next: Currency) => {
+    if (next === currency) return;
+    setCurrency(next);
+    setReward(REWARD_DEFAULT[next]);
+  };
 
   const canNext = useMemo(() => {
     if (step === 1) return true;
@@ -74,24 +107,63 @@ export default function PostBountyPage() {
   const onSubmit = async () => {
     setSubmitting(true);
     try {
-      const b = await postBounty({
-        title: title.trim(),
-        description: description.trim(),
-        lat: pinPos.lat,
-        lng: pinPos.lng,
-        address: "Pinned location",
-        reward_sol: rewardNum,
-        category,
-        reference_video_url: null,
-        reference_thumbnail_url: null,
-      });
-      setCreated(b);
-      toast(`${rewardNum.toFixed(2)} SOL escrowed`, {
+      const trimmedTitle = title.trim();
+      const trimmedDescription = description.trim();
+
+      let bounty: Bounty;
+      if (currency === "SOL") {
+        bounty = await postBounty({
+          title: trimmedTitle,
+          description: trimmedDescription,
+          lat: pinPos.lat,
+          lng: pinPos.lng,
+          address: "Pinned location",
+          reward: rewardNum,
+          currency: "SOL",
+          category,
+          reference_video_url: null,
+          reference_thumbnail_url: null,
+        });
+      } else {
+        if (!isWorldApp()) {
+          throw new MiniKitNotInstalledError(
+            "Open this mini app inside World App to pay in WLD."
+          );
+        }
+        const intent = await createWldBountyIntent({
+          title: trimmedTitle,
+          description: trimmedDescription,
+          lat: pinPos.lat,
+          lng: pinPos.lng,
+          reward_wld: rewardNum,
+          category,
+          reference_video_url: null,
+        });
+        const pay = await payWldBounty({
+          reference: intent.reference,
+          recipient: intent.recipient,
+          amountWld: intent.expected_amount_wld,
+          description: trimmedTitle || "Cleanr bounty escrow",
+        });
+        bounty = await confirmWldBounty({
+          reference: intent.reference,
+          transaction_id: pay.transactionId,
+        });
+      }
+
+      setCreated(bounty);
+      toast(`${formatReward(rewardNum, currency)} escrowed`, {
         variant: "success",
         description: "Your bounty is live on the map.",
       });
-    } catch {
-      toast("Couldn't post bounty", { variant: "error" });
+    } catch (err) {
+      const description =
+        err instanceof MiniKitPayError ||
+        err instanceof MiniKitNotInstalledError ||
+        err instanceof Error
+          ? err.message
+          : undefined;
+      toast("Couldn't post bounty", { variant: "error", description });
     } finally {
       setSubmitting(false);
     }
@@ -137,6 +209,8 @@ export default function PostBountyPage() {
             setTitle={setTitle}
             description={description}
             setDescription={setDescription}
+            currency={currency}
+            onChangeCurrency={onChangeCurrency}
             reward={reward}
             setReward={setReward}
             usdEstimate={usdEstimate}
@@ -154,6 +228,7 @@ export default function PostBountyPage() {
             title={title}
             description={description}
             reward={rewardNum}
+            currency={currency}
             usdEstimate={usdEstimate}
             category={category}
             pinPos={pinPos}
@@ -193,7 +268,7 @@ export default function PostBountyPage() {
               iconRight={<CheckIcon width={18} height={18} />}
               onClick={onSubmit}
             >
-              Escrow {rewardNum.toFixed(2)} SOL & post
+              Escrow {formatReward(rewardNum, currency)} & post
             </Button>
           )}
         </div>
@@ -306,6 +381,8 @@ function StepDetails({
   setTitle,
   description,
   setDescription,
+  currency,
+  onChangeCurrency,
   reward,
   setReward,
   usdEstimate,
@@ -316,6 +393,8 @@ function StepDetails({
   setTitle: (s: string) => void;
   description: string;
   setDescription: (s: string) => void;
+  currency: Currency;
+  onChangeCurrency: (c: Currency) => void;
   reward: string;
   setReward: (s: string) => void;
   usdEstimate: number;
@@ -369,8 +448,22 @@ function StepDetails({
         />
       </FieldGroup>
 
-      <FieldGroup label="Reward" hint={`~${formatUsd(usdEstimate)}`}>
-        <div className="relative">
+      <FieldGroup label="Reward currency" hint={`~${formatUsd(usdEstimate)}`}>
+        <div className="grid grid-cols-2 gap-2">
+          <CurrencyChoice
+            currency="WLD"
+            active={currency === "WLD"}
+            onClick={() => onChangeCurrency("WLD")}
+            description="World App · WLD"
+          />
+          <CurrencyChoice
+            currency="SOL"
+            active={currency === "SOL"}
+            onClick={() => onChangeCurrency("SOL")}
+            description="Solana · SOL"
+          />
+        </div>
+        <div className="relative mt-2">
           <input
             type="number"
             inputMode="decimal"
@@ -378,28 +471,63 @@ function StepDetails({
             step="0.01"
             value={reward}
             onChange={(e) => setReward(e.target.value)}
-            className="w-full h-14 pl-12 pr-16 bg-[color:var(--color-surface)] rounded-[14px] text-[22px] font-semibold tabular outline-none focus:bg-white focus:ring-2 focus:ring-[color:var(--color-brand-500)] transition-all"
+            className="w-full h-14 pl-12 pr-20 bg-[color:var(--color-surface)] rounded-[14px] text-[22px] font-semibold tabular outline-none focus:bg-white focus:ring-2 focus:ring-[color:var(--color-brand-500)] transition-all"
           />
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[color:var(--color-brand-600)]">
             <CoinIcon width={20} height={20} />
           </span>
           <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-[color:var(--color-muted)]">
-            SOL
+            {rewardUnit(currency)}
           </span>
         </div>
         <div className="flex gap-1.5 mt-2 overflow-x-auto scroll-clean">
-          {REWARD_QUICK.map((q) => (
+          {REWARD_QUICK[currency].map((q) => (
             <button
               key={q}
               onClick={() => setReward(q.toFixed(2))}
               className="px-3 h-8 text-xs font-medium rounded-full border border-[color:var(--color-border)] bg-white hover:bg-[color:var(--color-surface)] tabular shrink-0"
             >
-              {q.toFixed(2)} SOL
+              {formatReward(q, currency)}
             </button>
           ))}
         </div>
+        {currency === "WLD" && !isWorldApp() && (
+          <p className="mt-2 text-[11px] leading-snug text-[color:var(--color-muted)]">
+            WLD bounties are paid from your World App wallet. Open this page
+            inside World App to escrow WLD; otherwise switch to SOL.
+          </p>
+        )}
       </FieldGroup>
     </div>
+  );
+}
+
+function CurrencyChoice({
+  currency,
+  description,
+  active,
+  onClick,
+}: {
+  currency: Currency;
+  description: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-3 rounded-[14px] border text-left transition-colors ${
+        active
+          ? "border-[color:var(--color-brand-500)] bg-[color:var(--color-brand-50)] text-[color:var(--color-brand-700)]"
+          : "border-[color:var(--color-border)] bg-white hover:bg-[color:var(--color-surface)]"
+      }`}
+    >
+      <p className="text-sm font-semibold">{currency}</p>
+      <p className="text-[11px] text-[color:var(--color-muted)] leading-tight mt-0.5">
+        {description}
+      </p>
+    </button>
   );
 }
 
@@ -465,6 +593,7 @@ function StepReview({
   title,
   description,
   reward,
+  currency,
   usdEstimate,
   category,
   pinPos,
@@ -472,6 +601,7 @@ function StepReview({
   title: string;
   description: string;
   reward: number;
+  currency: Currency;
   usdEstimate: number;
   category: BountyCategory;
   pinPos: { lat: number; lng: number };
@@ -500,17 +630,25 @@ function StepReview({
             {pinPos.lat.toFixed(5)}, {pinPos.lng.toFixed(5)}
           </span>
           <span className="text-[18px] font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
-            <CoinIcon width={16} height={16} /> {reward.toFixed(2)} SOL
+            <CoinIcon width={16} height={16} /> {formatReward(reward, currency)}
           </span>
         </div>
       </Card>
 
       <Card className="p-4 grid gap-2">
-        <Row label="Network fee" value="~$0.001" />
+        <Row label="Currency" value={currency} />
+        <Row
+          label="Network fee"
+          value={currency === "SOL" ? "~$0.001" : "Sponsored by World App"}
+        />
         <Row label="Verification" value="AI + sensor multi-check" />
         <Row label="Auto-refund" value="Bounty refunds if unclaimed in 7d" />
         <div className="border-t border-[color:var(--color-border)] mt-1" />
-        <Row label="Total escrow" value={`${reward.toFixed(2)} SOL · ~${formatUsd(usdEstimate)}`} bold />
+        <Row
+          label="Total escrow"
+          value={`${formatReward(reward, currency)} · ~${formatUsd(usdEstimate)}`}
+          bold
+        />
       </Card>
     </div>
   );
@@ -586,7 +724,8 @@ function PostedSuccess({
         Your bounty is live
       </h2>
       <p className="text-sm text-[color:var(--color-muted)] mt-2 max-w-[280px]">
-        {bounty.reward_sol.toFixed(2)} SOL is escrowed. The claimer pool is being notified.
+        {formatReward(bounty.reward, bounty.reward_currency)} is escrowed. The
+        claimer pool is being notified.
       </p>
       <div className="mt-6 w-full max-w-[320px] grid gap-2">
         <Button fullWidth size="xl" onClick={onDone}>

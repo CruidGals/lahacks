@@ -56,10 +56,10 @@ export function BountyPreviewSheet({
             <div className="text-right">
               <p className="text-[22px] font-bold tabular tracking-tight text-[color:var(--color-brand-600)] flex items-center gap-1 justify-end">
                 <CoinIcon width={18} height={18} />
-                {bounty.reward_sol.toFixed(2)}
+                {bounty.reward.toFixed(2)}
               </p>
               <p className="text-[11px] text-[color:var(--color-muted)] tabular">
-                ~{formatUsd(bounty.reward_usd_estimate)}
+                {bounty.reward_currency} · ~{formatUsd(bounty.reward_usd_estimate)}
               </p>
             </div>
           </div>

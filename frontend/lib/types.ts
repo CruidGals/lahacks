@@ -14,6 +14,13 @@ export type BountyCategory =
   | "beach"
   | "other";
 
+/**
+ * Both currencies the marketplace supports. WLD lives on World Chain (ERC-20)
+ * and is paid via the MiniKit pay flow; SOL lives on Solana and is escrowed
+ * server-side from a backend-funded vault.
+ */
+export type Currency = "WLD" | "SOL";
+
 export type Bounty = {
   id: string;
   title: string;
@@ -21,7 +28,17 @@ export type Bounty = {
   lat: number;
   lng: number;
   address: string;
+  /** Native amount in the bounty's `reward_currency`. */
+  reward: number;
+  reward_currency: Currency;
+  /**
+   * Convenience: same value as `reward` when `reward_currency === "SOL"`,
+   * otherwise 0. Kept so older UI surfaces don't crash; new UI should read
+   * `reward` + `reward_currency` instead.
+   */
   reward_sol: number;
+  /** Same idea as `reward_sol`, mirrored for WLD. */
+  reward_wld: number;
   reward_usd_estimate: number;
   status: BountyStatus;
   urgency_score: number; // 0..100
@@ -64,13 +81,22 @@ export type User = {
   world_id_verified: boolean;
   joined_at: string;
   total_earned_sol: number;
+  total_earned_wld: number;
   total_completed: number;
   current_streak: number;
-  wallet: { address: string; balance_sol: number };
+  wallet: {
+    /** Solana wallet that receives SOL payouts and refunds. */
+    address: string;
+    /** Linked World App wallet for WLD payouts/refunds (null if not linked). */
+    world_address: string | null;
+    balance_sol: number;
+    balance_wld: number;
+  };
   recent_completed: Array<{
     bounty_id: string;
     title: string;
-    reward_sol: number;
+    reward: number;
+    reward_currency: Currency;
     completed_at: string;
   }>;
 };
@@ -81,6 +107,8 @@ export type LeaderboardEntry = {
   handle: string;
   avatar_color: string;
   total_earned_sol: number;
+  total_earned_wld: number;
+  total_earned_usd: number;
   total_completed: number;
 };
 

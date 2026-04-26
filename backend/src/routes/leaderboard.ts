@@ -4,8 +4,9 @@ import { supabase } from '../config/supabase.js';
 import { rewardLamportsToSol, rewardMicroToWld } from '../lib/bounties.js';
 
 // Rough USD conversion rates for combined ranking. These are display-only;
-// the source of truth is always per-currency totals.
-const WLD_USD = 2.5;
+// the source of truth is always per-currency totals. Keep in sync with
+// `frontend/lib/format.ts` SPOT_USD so both ends agree on USD totals.
+const WLD_USD = 2;
 const SOL_USD = 150;
 
 export const leaderboardRouter = Router();

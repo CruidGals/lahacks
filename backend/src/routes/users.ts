@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser } from '../lib/auth.js';
 import { rewardLamportsToSol, rewardMicroToWld } from '../lib/bounties.js';
+import { getWldBalance } from '../lib/wld.js';
 
 export const usersRouter = Router();
 
@@ -265,6 +266,21 @@ usersRouter.get('/me', async (req, res) => {
     );
   }
 
+  // Best-effort live WLD balance read off World Chain. We fall back to the
+  // user's lifetime earnings so the UI still has *something* to render when
+  // the wallet isn't linked or the RPC is unreachable.
+  let walletBalanceWld = Number(totalEarnedWld.toFixed(4));
+  if (user.world_address) {
+    try {
+      walletBalanceWld = await getWldBalance(user.world_address);
+    } catch (error) {
+      console.warn(
+        `Failed to fetch on-chain WLD balance for user=${user.id} address=${user.world_address}:`,
+        error
+      );
+    }
+  }
+
   res.json({
     user: {
       ...user,
@@ -275,7 +291,7 @@ usersRouter.get('/me', async (req, res) => {
       wallet: {
         address: user.wallet_address,
         world_address: user.world_address,
-        balance_wld: Number(totalEarnedWld.toFixed(4)),
+        balance_wld: walletBalanceWld,
         balance_sol: walletBalanceSol
       },
       recent_completed: recent

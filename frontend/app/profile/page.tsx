@@ -32,8 +32,21 @@ import {
   type ClaimedBounty,
 } from "../../lib/api";
 import { ApiError } from "../../lib/http";
-import type { User } from "../../lib/types";
-import { formatRelative, formatTimeLeft, formatUsd } from "../../lib/format";
+import type { Currency, User } from "../../lib/types";
+import {
+  formatReward,
+  formatRelative,
+  formatTimeLeft,
+  formatUsd,
+  rewardUsd,
+  SPOT_USD,
+} from "../../lib/format";
+import {
+  isWorldApp,
+  linkWorldWallet,
+  MiniKitNotInstalledError,
+  MiniKitWalletAuthError,
+} from "../../lib/minikit";
 import { useToast } from "../_components/Toast";
 
 export default function ProfilePage() {
@@ -49,7 +62,9 @@ export default function ProfilePage() {
   const [rpContext, setRpContext] = useState<RpContext | null>(null);
   const [claimed, setClaimed] = useState<ClaimedBounty[] | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [linkingWallet, setLinkingWallet] = useState(false);
   const { toast } = useToast();
+  const inWorldApp = isWorldApp();
 
   useEffect(() => {
     getMe().then(setUser);
@@ -84,6 +99,31 @@ export default function ProfilePage() {
       });
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const onLinkWorldWallet = async () => {
+    if (linkingWallet) return;
+    if (!inWorldApp) {
+      toast("Open in World App to link your wallet", { variant: "info" });
+      return;
+    }
+    setLinkingWallet(true);
+    try {
+      await linkWorldWallet();
+      setReloadTick((t) => t + 1);
+      toast("World App wallet linked", { variant: "success" });
+    } catch (e) {
+      const description =
+        e instanceof MiniKitNotInstalledError ||
+        e instanceof MiniKitWalletAuthError ||
+        e instanceof ApiError ||
+        e instanceof Error
+          ? e.message
+          : undefined;
+      toast("Couldn't link wallet", { variant: "error", description });
+    } finally {
+      setLinkingWallet(false);
     }
   };
 
@@ -154,14 +194,44 @@ export default function ProfilePage() {
           <p className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted)] font-semibold">
             Wallet balance
           </p>
-          <p className="text-[34px] font-bold tabular tracking-tight text-[color:var(--color-ink)] mt-1 leading-none flex items-center gap-2">
-            <CoinIcon width={26} height={26} className="text-[color:var(--color-brand-600)]" />
-            {user ? user.wallet.balance_sol.toFixed(2) : "—"}
-            <span className="text-base font-semibold text-[color:var(--color-muted)] ml-1">SOL</span>
-          </p>
-          <p className="text-xs text-[color:var(--color-muted)] tabular mt-1">
-            ~{user ? formatUsd(user.wallet.balance_sol * 153) : "—"} on Solana
-          </p>
+          <div className="grid grid-cols-2 gap-3 mt-2">
+            <CurrencyTile
+              currency="WLD"
+              amount={user?.wallet.balance_wld ?? null}
+              network="World Chain"
+            />
+            <CurrencyTile
+              currency="SOL"
+              amount={user?.wallet.balance_sol ?? null}
+              network="Solana"
+            />
+          </div>
+          {user && (
+            <div className="mt-3 grid gap-1.5 text-[11px] text-[color:var(--color-muted)] tabular">
+              <p className="truncate">
+                <span className="font-semibold text-[color:var(--color-ink-2)]">SOL · </span>
+                {user.wallet.address}
+              </p>
+              <p className="truncate flex items-center gap-2">
+                <span className="font-semibold text-[color:var(--color-ink-2)]">WLD · </span>
+                {user.wallet.world_address ? (
+                  user.wallet.world_address
+                ) : (
+                  <button
+                    onClick={onLinkWorldWallet}
+                    disabled={linkingWallet || !inWorldApp}
+                    className="inline-flex items-center gap-1 text-[color:var(--color-brand-700)] font-semibold disabled:opacity-50"
+                  >
+                    {linkingWallet
+                      ? "Linking…"
+                      : inWorldApp
+                        ? "Link World App wallet"
+                        : "Open in World App to link"}
+                  </button>
+                )}
+              </p>
+            </div>
+          )}
         </Card>
 
         {/* Stat row */}
@@ -174,8 +244,15 @@ export default function ProfilePage() {
           <Stat
             icon={<CoinIcon width={14} height={14} />}
             label="Earned"
-            value={user ? `${user.total_earned_sol.toFixed(2)}` : "—"}
-            unit="SOL"
+            value={
+              user
+                ? formatUsd(
+                    rewardUsd(user.total_earned_wld, "WLD") +
+                      rewardUsd(user.total_earned_sol, "SOL")
+                  )
+                : "—"
+            }
+            unit="USD"
           />
           <Stat
             icon={<FireIcon width={14} height={14} />}
@@ -346,7 +423,7 @@ export default function ProfilePage() {
                   </p>
                 </div>
                 <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)]">
-                  +{c.reward_sol.toFixed(2)} SOL
+                  +{formatReward(c.reward, c.reward_currency)}
                 </span>
               </Card>
             ))}
@@ -374,6 +451,53 @@ export default function ProfilePage() {
           Reset demo data
         </Button>
       </div>
+    </div>
+  );
+}
+
+function CurrencyTile({
+  currency,
+  amount,
+  network,
+}: {
+  currency: Currency;
+  amount: number | null;
+  network: string;
+}) {
+  const display = amount === null ? "—" : amount.toFixed(2);
+  const usd = amount === null ? null : amount * SPOT_USD[currency];
+  return (
+    <div
+      className={`rounded-[14px] px-3 py-2.5 border ${
+        currency === "WLD"
+          ? "bg-[#0f172a] text-white border-transparent"
+          : "bg-white border-[color:var(--color-border)]"
+      }`}
+    >
+      <p
+        className={`text-[10px] uppercase tracking-wider font-semibold ${
+          currency === "WLD" ? "text-white/70" : "text-[color:var(--color-muted)]"
+        }`}
+      >
+        {currency}
+      </p>
+      <p className="text-[20px] font-bold tabular leading-tight mt-0.5 flex items-baseline gap-1">
+        {display}
+        <span
+          className={`text-[10px] font-semibold ${
+            currency === "WLD" ? "text-white/60" : "text-[color:var(--color-muted)]"
+          }`}
+        >
+          {currency}
+        </span>
+      </p>
+      <p
+        className={`text-[10px] tabular mt-0.5 ${
+          currency === "WLD" ? "text-white/60" : "text-[color:var(--color-muted)]"
+        }`}
+      >
+        {usd === null ? network : `${formatUsd(usd)} · ${network}`}
+      </p>
     </div>
   );
 }
@@ -454,7 +578,7 @@ function ClaimedBountyCard({
             <span className="inline-flex items-center gap-1">
               <CoinIcon width={11} height={11} />
               <span className="font-semibold text-[color:var(--color-brand-600)]">
-                {bounty.reward_sol.toFixed(2)} SOL
+                {formatReward(bounty.reward, bounty.reward_currency)}
               </span>
             </span>
             <span className="inline-flex items-center gap-1">

@@ -306,6 +306,9 @@ export async function verifyMiniKitPayment(
     }
   }
 
+  // The Developer Portal returns the *settled* amount as `tokenAmount` in WLD
+  // wei (token base units), regardless of the user's chosen input token. We
+  // compare against the expected WLD wei amount.
   if (payment.tokenAmount) {
     let actual: bigint;
     try {
@@ -415,6 +418,30 @@ export async function transferWldFromVault(
   );
 
   return { txHash, recipient, amountWei };
+}
+
+/**
+ * Read the on-chain WLD balance for `walletAddress`, returned in human-friendly
+ * WLD (rounded to 6 decimal places).
+ *
+ * This is a best-effort, read-only call: callers should `try`/`catch` around it
+ * because RPC failures should never block surrounding flows (e.g. profile
+ * loads). Returns `0` if the address is malformed.
+ */
+export async function getWldBalance(walletAddress: string): Promise<number> {
+  if (!isAddress(walletAddress)) return 0;
+
+  const token = readWldTokenAddress();
+  const publicClient = getPublicClient();
+
+  const wei = (await publicClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [walletAddress as Address]
+  })) as bigint;
+
+  return microToWld(weiToMicro(wei));
 }
 
 // ---------- Re-exports for callers ----------
