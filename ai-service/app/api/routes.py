@@ -24,6 +24,7 @@ from app.pipelines.spec_pipeline import (
     extract_spec_candidates,
 )
 from app.pipelines.submission_pipeline import Stage2Result, run_stage2_pipeline
+from app.pipelines.xp_pipeline import XpReward, run_xp_pipeline
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 
@@ -66,6 +67,22 @@ class SpecCandidatesRequest(BaseModel):
 
 class Stage2Request(BaseModel):
     """Body for ``POST /pipelines/submission/verify``.
+class XpPipelineRequest(BaseModel):
+    """Body for ``POST /pipelines/xp``.
+
+    All fields besides ``description`` are optional but help the LLM ground
+    its difficulty/importance reasoning.
+    """
+
+    title: str = ""
+    description: str
+    category: str | None = None
+    reward_sol: float | None = None
+    lat: float | None = None
+    lng: float | None = None
+
+
+# --- Endpoints ------------------------------------------------------------ #
 
     Stage 2 entry point. The submission video is analysed against the
     confirmed :class:`GroundTruthSpec` to produce a :class:`Stage2Result`.
@@ -199,6 +216,26 @@ async def run_submission_verify(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+@router.post(
+    "/xp",
+    response_model=XpReward,
+    status_code=status.HTTP_200_OK,
+    summary="Estimate XP reward for a bounty from its title/description.",
+)
+async def run_xp(
+    body: XpPipelineRequest,
+    settings: Settings = Depends(get_settings),
+) -> XpReward:
+    try:
+        return await run_xp_pipeline(
+            title=body.title,
+            description=body.description,
+            category=body.category,
+            reward_sol=body.reward_sol,
+            lat=body.lat,
+            lng=body.lng,
+            settings=settings,
+        )
     except LLMConfigError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LLMResponseError as exc:

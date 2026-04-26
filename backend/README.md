@@ -20,6 +20,7 @@ World ID / IDKit:
 Solana (devnet demo):
 
 - `SOLANA_RPC_URL` (optional, defaults to Solana devnet)
+- `SET_BOUNTY_WITH_FUNDER` (`true` or `false`)
 - `SOLANA_FUNDER_SECRET_KEY` (base58 byte array string, e.g. `"[1,2,...]"`)
 - `SOLANA_VAULT_SECRET_KEY` (base58 byte array string, e.g. `"[1,2,...]"`)
 
@@ -47,7 +48,9 @@ World ID: clients first call `POST /api/users/world/rp-context` to fetch RP cont
 Two backend functions are implemented in `src/lib/solana.ts`:
 
 - `escrowBounty(amount, bounty_id)`:
-  - sends a devnet transfer from `SOLANA_FUNDER_SECRET_KEY` wallet to the escrow vault wallet
+  - when `SET_BOUNTY_WITH_FUNDER=true`, sends transfer from `SOLANA_FUNDER_SECRET_KEY` to vault
+  - when `SET_BOUNTY_WITH_FUNDER=false`, backend first validates the authenticated poster wallet has enough lamports, then escrows via funder wallet for demo reliability
+  - before transfer, backend checks required balance (`reward_lamports + fee buffer`)
   - returned signature is stored on `bounties.escrow_tx_sig`
 - `releaseBountyToClaimer(bounty_id, recipient)`:
   - sends a devnet transfer from vault wallet to claimer wallet

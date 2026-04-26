@@ -48,6 +48,7 @@ from app.pipelines.submission_pipeline import (
     SubmissionObject,
     run_stage2_pipeline,
 )
+from app.pipelines.xp_pipeline import XpReward, run_xp_pipeline
 
 __all__ = [
     "Bbox",
@@ -71,10 +72,14 @@ __all__ = [
     "Stage2FinalVerdict",
     "Stage2Result",
     "SubmissionObject",
+    "TrashItem",
+    "XpReward",
     "build_dino_output_from_video",
     "build_ground_truth_spec",
     "extract_spec_candidates",
     "run_cleanup_pipeline",
     "run_disposal_pipeline",
     "run_stage2_pipeline",
+    "run_reference_pipeline",
+    "run_xp_pipeline",
 ]

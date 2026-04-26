@@ -31,8 +31,9 @@ import {
   verifyWorldIdWithProof,
   type ClaimedBounty,
 } from "../../lib/api";
+import { ApiError } from "../../lib/http";
 import type { User } from "../../lib/types";
-import { formatRelative, formatTimeLeft, formatUsd } from "../../lib/format";
+import { formatRelative, formatReward, formatTimeLeft, formatUsd, formatXp } from "../../lib/format";
 import { useToast } from "../_components/Toast";
 
 export default function ProfilePage() {
@@ -171,10 +172,9 @@ export default function ProfilePage() {
             value={user ? `${user.total_completed}` : "—"}
           />
           <Stat
-            icon={<CoinIcon width={14} height={14} />}
-            label="Earned"
-            value={user ? `${user.total_earned_sol.toFixed(2)}` : "—"}
-            unit="SOL"
+            icon={<FireIcon width={14} height={14} />}
+            label="XP earned"
+            value={user ? formatXp(user.total_earned_xp) : "—"}
           />
           <Stat
             icon={<FireIcon width={14} height={14} />}
@@ -216,10 +216,29 @@ export default function ProfilePage() {
           environment={worldEnvironment}
           preset={orbLegacy({ signal: user?.id ?? "anonymous" })}
           handleVerify={async (result: IDKitResult) => {
-            await verifyWorldIdWithProof({
-              rp_id: rpContext.rp_id,
-              idkit_response: result as unknown as Record<string, unknown>,
-            });
+            try {
+              await verifyWorldIdWithProof({
+                rp_id: rpContext.rp_id,
+                idkit_response: result as unknown as Record<string, unknown>,
+              });
+            } catch (error) {
+              const description =
+                error instanceof ApiError
+                  ? typeof error.body === "object" &&
+                    error.body &&
+                    "details" in error.body &&
+                    (error.body as { details?: unknown }).details
+                    ? JSON.stringify((error.body as { details: unknown }).details)
+                    : error.message
+                  : error instanceof Error
+                    ? error.message
+                    : "Verification request failed";
+              toast("World ID verification failed", {
+                variant: "error",
+                description,
+              });
+              throw error;
+            }
           }}
           onSuccess={() => {
             setVerifyOpen(false);
@@ -326,7 +345,7 @@ export default function ProfilePage() {
                   </p>
                 </div>
                 <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)]">
-                  +{c.reward_sol.toFixed(2)} SOL
+                  +{formatReward(c)}
                 </span>
               </Card>
             ))}
@@ -434,7 +453,7 @@ function ClaimedBountyCard({
             <span className="inline-flex items-center gap-1">
               <CoinIcon width={11} height={11} />
               <span className="font-semibold text-[color:var(--color-brand-600)]">
-                {bounty.reward_sol.toFixed(2)} SOL
+                {formatReward(bounty)}
               </span>
             </span>
             <span className="inline-flex items-center gap-1">

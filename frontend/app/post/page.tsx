@@ -15,15 +15,16 @@ import {
   CoinIcon,
   CompassIcon,
   CrosshairIcon,
+  FireIcon,
   LeafIcon,
   LocationIcon,
 } from "../_components/icons";
 import { useGeolocation } from "../../lib/useGeolocation";
 import { DEFAULT_LOCATION } from "../../lib/mock-data";
-import { postBounty } from "../../lib/api";
-import type { Bounty, BountyCategory } from "../../lib/types";
+import { getMe, postBounty } from "../../lib/api";
+import type { Bounty, BountyCategory, RewardType } from "../../lib/types";
 import { useToast } from "../_components/Toast";
-import { categoryLabel, formatUsd } from "../../lib/format";
+import { categoryLabel, formatUsd, formatReward, formatXp } from "../../lib/format";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -37,6 +38,9 @@ const CATEGORIES: { id: BountyCategory; emoji: string; label: string }[] = [
 ];
 
 const REWARD_QUICK = [0.05, 0.1, 0.2, 0.35, 0.5];
+const XP_QUICK = [25, 50, 100, 200, 500];
+const MIN_XP_STAKE = 5;
+const MAX_XP_STAKE = 5000;
 
 export default function PostBountyPage() {
   const router = useRouter();
@@ -48,7 +52,10 @@ export default function PostBountyPage() {
   const [category, setCategory] = useState<BountyCategory>("litter");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [rewardType, setRewardType] = useState<RewardType>("sol");
   const [reward, setReward] = useState<string>("0.20");
+  const [xpStake, setXpStake] = useState<string>("100");
+  const [userXpBalance, setUserXpBalance] = useState<number | null>(null);
   const [referenceCaptured, setReferenceCaptured] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<Bounty | null>(null);
@@ -61,35 +68,76 @@ export default function PostBountyPage() {
   }, [geo.location]);
 
   const rewardNum = parseFloat(reward);
+  const xpNum = Math.round(parseFloat(xpStake));
   const usdEstimate = isFinite(rewardNum) ? Math.round(rewardNum * 153) : 0;
+  const solRewardOk = rewardType === "sol" && rewardNum > 0;
+  const xpStakeOk =
+    rewardType === "xp" &&
+    Number.isFinite(xpNum) &&
+    xpNum >= MIN_XP_STAKE &&
+    xpNum <= MAX_XP_STAKE;
+
+  useEffect(() => {
+    getMe()
+      .then((u) => setUserXpBalance(u.xp))
+      .catch(() => setUserXpBalance(null));
+  }, []);
 
   const canNext = useMemo(() => {
     if (step === 1) return true;
-    if (step === 2)
-      return title.trim().length >= 4 && description.trim().length >= 8 && rewardNum > 0;
+    if (step === 2) {
+      const base =
+        title.trim().length >= 4 &&
+        description.trim().length >= 8;
+      if (rewardType === "sol") return base && solRewardOk;
+      return base && xpStakeOk;
+    }
     if (step === 3) return referenceCaptured;
     return true;
-  }, [step, title, description, rewardNum, referenceCaptured]);
+  }, [step, title, description, referenceCaptured, rewardType, solRewardOk, xpStakeOk]);
 
   const onSubmit = async () => {
     setSubmitting(true);
     try {
-      const b = await postBounty({
+      const common = {
         title: title.trim(),
         description: description.trim(),
         lat: pinPos.lat,
         lng: pinPos.lng,
         address: "Pinned location",
-        reward_sol: rewardNum,
         category,
         reference_video_url: null,
         reference_thumbnail_url: null,
-      });
-      setCreated(b);
-      toast(`${rewardNum.toFixed(2)} SOL escrowed`, {
-        variant: "success",
-        description: "Your bounty is live on the map.",
-      });
+      } as const;
+
+      const result = await postBounty(
+        rewardType === "sol"
+          ? {
+              ...common,
+              reward_type: "sol" as const,
+              reward_sol: rewardNum,
+            }
+          : {
+              ...common,
+              reward_type: "xp" as const,
+              reward_xp: xpNum,
+            }
+      );
+      setCreated(result.bounty);
+      if (result.bounty.reward_type === "xp") {
+        toast(`${formatReward(result.bounty)} staked from your balance`, {
+          variant: "success",
+          description: "Your XP bounty is live on the map.",
+        });
+      } else {
+        toast(`${rewardNum.toFixed(2)} SOL escrowed`, {
+          variant: "success",
+          description: "Your bounty is live on the map.",
+        });
+      }
+      getMe()
+        .then((u) => setUserXpBalance(u.xp))
+        .catch(() => {});
     } catch {
       toast("Couldn't post bounty", { variant: "error" });
     } finally {
@@ -137,9 +185,14 @@ export default function PostBountyPage() {
             setTitle={setTitle}
             description={description}
             setDescription={setDescription}
+            rewardType={rewardType}
+            setRewardType={setRewardType}
             reward={reward}
             setReward={setReward}
+            xpStake={xpStake}
+            setXpStake={setXpStake}
             usdEstimate={usdEstimate}
+            userXpBalance={userXpBalance}
           />
         )}
         {step === 3 && (
@@ -153,7 +206,9 @@ export default function PostBountyPage() {
           <StepReview
             title={title}
             description={description}
-            reward={rewardNum}
+            rewardType={rewardType}
+            rewardSol={rewardNum}
+            rewardXp={xpNum}
             usdEstimate={usdEstimate}
             category={category}
             pinPos={pinPos}
@@ -193,7 +248,9 @@ export default function PostBountyPage() {
               iconRight={<CheckIcon width={18} height={18} />}
               onClick={onSubmit}
             >
-              Escrow {rewardNum.toFixed(2)} SOL & post
+              {rewardType === "sol"
+                ? `Escrow ${rewardNum.toFixed(2)} SOL & post`
+                : `Stake ${formatXp(xpNum)} & post`}
             </Button>
           )}
         </div>
@@ -306,9 +363,14 @@ function StepDetails({
   setTitle,
   description,
   setDescription,
+  rewardType,
+  setRewardType,
   reward,
   setReward,
+  xpStake,
+  setXpStake,
   usdEstimate,
+  userXpBalance,
 }: {
   category: BountyCategory;
   setCategory: (c: BountyCategory) => void;
@@ -316,10 +378,16 @@ function StepDetails({
   setTitle: (s: string) => void;
   description: string;
   setDescription: (s: string) => void;
+  rewardType: RewardType;
+  setRewardType: (t: RewardType) => void;
   reward: string;
   setReward: (s: string) => void;
+  xpStake: string;
+  setXpStake: (s: string) => void;
   usdEstimate: number;
+  userXpBalance: number | null;
 }) {
+  const xpParsed = Math.round(parseFloat(xpStake));
   return (
     <div className="flex-1 px-4 pt-3 pb-6 space-y-5">
       <div>
@@ -369,35 +437,115 @@ function StepDetails({
         />
       </FieldGroup>
 
-      <FieldGroup label="Reward" hint={`~${formatUsd(usdEstimate)}`}>
-        <div className="relative">
-          <input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            value={reward}
-            onChange={(e) => setReward(e.target.value)}
-            className="w-full h-14 pl-12 pr-16 bg-[color:var(--color-surface)] rounded-[14px] text-[22px] font-semibold tabular outline-none focus:bg-white focus:ring-2 focus:ring-[color:var(--color-brand-500)] transition-all"
-          />
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[color:var(--color-brand-600)]">
-            <CoinIcon width={20} height={20} />
-          </span>
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-[color:var(--color-muted)]">
-            SOL
-          </span>
+      <FieldGroup
+        label="Reward type"
+        hint={rewardType === "sol" ? `~${formatUsd(usdEstimate)}` : "No crypto needed"}
+      >
+        <div className="flex gap-1.5 p-1 bg-[color:var(--color-surface)] rounded-full">
+          <button
+            type="button"
+            onClick={() => setRewardType("sol")}
+            className={`flex-1 h-10 text-sm font-semibold rounded-full transition-colors ${
+              rewardType === "sol"
+                ? "bg-white text-[color:var(--color-ink)] shadow-[var(--shadow-card)]"
+                : "text-[color:var(--color-muted)]"
+            }`}
+          >
+            Solana
+          </button>
+          <button
+            type="button"
+            onClick={() => setRewardType("xp")}
+            className={`flex-1 h-10 text-sm font-semibold rounded-full transition-colors ${
+              rewardType === "xp"
+                ? "bg-white text-[color:var(--color-ink)] shadow-[var(--shadow-card)]"
+                : "text-[color:var(--color-muted)]"
+            }`}
+          >
+            XP only
+          </button>
         </div>
-        <div className="flex gap-1.5 mt-2 overflow-x-auto scroll-clean">
-          {REWARD_QUICK.map((q) => (
-            <button
-              key={q}
-              onClick={() => setReward(q.toFixed(2))}
-              className="px-3 h-8 text-xs font-medium rounded-full border border-[color:var(--color-border)] bg-white hover:bg-[color:var(--color-surface)] tabular shrink-0"
-            >
-              {q.toFixed(2)} SOL
-            </button>
-          ))}
-        </div>
+        {rewardType === "sol" ? (
+          <div className="mt-3">
+            <div className="relative">
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={reward}
+                onChange={(e) => setReward(e.target.value)}
+                className="w-full h-14 pl-12 pr-16 bg-[color:var(--color-surface)] rounded-[14px] text-[22px] font-semibold tabular outline-none focus:bg-white focus:ring-2 focus:ring-[color:var(--color-brand-500)] transition-all"
+              />
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[color:var(--color-brand-600)]">
+                <CoinIcon width={20} height={20} />
+              </span>
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-[color:var(--color-muted)]">
+                SOL
+              </span>
+            </div>
+            <p className="text-[11px] text-[color:var(--color-muted)] mt-1.5">
+              Claimers also earn bonus XP from AI scoring based on the task.
+            </p>
+            <div className="flex gap-1.5 mt-2 overflow-x-auto scroll-clean">
+              {REWARD_QUICK.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => setReward(q.toFixed(2))}
+                  className="px-3 h-8 text-xs font-medium rounded-full border border-[color:var(--color-border)] bg-white hover:bg-[color:var(--color-surface)] tabular shrink-0"
+                >
+                  {q.toFixed(2)} SOL
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3">
+            <div className="relative">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={MIN_XP_STAKE}
+                max={MAX_XP_STAKE}
+                step="5"
+                value={xpStake}
+                onChange={(e) => setXpStake(e.target.value)}
+                className="w-full h-14 pl-12 pr-20 bg-[color:var(--color-surface)] rounded-[14px] text-[22px] font-semibold tabular outline-none focus:bg-white focus:ring-2 focus:ring-[color:var(--color-brand-500)] transition-all"
+              />
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[color:var(--color-brand-600)]">
+                <FireIcon width={20} height={20} />
+              </span>
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-[color:var(--color-muted)]">
+                XP
+              </span>
+            </div>
+            {userXpBalance !== null && (
+              <p className="text-[11px] text-[color:var(--color-muted)] mt-1.5">
+                Your balance: {formatXp(userXpBalance)}
+                {userXpBalance < xpParsed && xpParsed >= MIN_XP_STAKE ? (
+                  <span className="text-red-600"> · Not enough XP</span>
+                ) : null}
+              </p>
+            )}
+            <p className="text-[11px] text-[color:var(--color-muted)] mt-1">
+              Stake {MIN_XP_STAKE}–{MAX_XP_STAKE} XP. It is held until the bounty is completed or
+              rejected.
+            </p>
+            <div className="flex gap-1.5 mt-2 overflow-x-auto scroll-clean">
+              {XP_QUICK.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => setXpStake(String(q))}
+                  className="px-3 h-8 text-xs font-medium rounded-full border border-[color:var(--color-border)] bg-white hover:bg-[color:var(--color-surface)] tabular shrink-0"
+                >
+                  {q} XP
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </FieldGroup>
     </div>
   );
@@ -464,26 +612,33 @@ function StepReference({
 function StepReview({
   title,
   description,
-  reward,
+  rewardType,
+  rewardSol,
+  rewardXp,
   usdEstimate,
   category,
   pinPos,
 }: {
   title: string;
   description: string;
-  reward: number;
+  rewardType: RewardType;
+  rewardSol: number;
+  rewardXp: number;
   usdEstimate: number;
   category: BountyCategory;
   pinPos: { lat: number; lng: number };
 }) {
+  const isSol = rewardType === "sol";
   return (
     <div className="flex-1 px-4 pt-3 pb-6 space-y-4">
       <div>
         <h2 className="text-[22px] font-semibold tracking-tight leading-tight">
-          Review &amp; escrow
+          {isSol ? "Review & escrow" : "Review & stake"}
         </h2>
         <p className="text-sm text-[color:var(--color-muted)] mt-1">
-          Funds stay in the smart contract until verification passes. You can cancel any time before claim.
+          {isSol
+            ? "Funds stay in the smart contract until verification passes. You can cancel any time before claim."
+            : "XP is taken from your balance and paid to the claimer when verification passes."}
         </p>
       </div>
 
@@ -500,17 +655,37 @@ function StepReview({
             {pinPos.lat.toFixed(5)}, {pinPos.lng.toFixed(5)}
           </span>
           <span className="text-[18px] font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
-            <CoinIcon width={16} height={16} /> {reward.toFixed(2)} SOL
+            {isSol ? (
+              <>
+                <CoinIcon width={16} height={16} /> {rewardSol.toFixed(2)} SOL
+              </>
+            ) : (
+              <>
+                <FireIcon width={16} height={16} /> {formatXp(rewardXp)}
+              </>
+            )}
           </span>
         </div>
       </Card>
 
       <Card className="p-4 grid gap-2">
-        <Row label="Network fee" value="~$0.001" />
+        {isSol && <Row label="Network fee" value="~$0.001" />}
         <Row label="Verification" value="AI + sensor multi-check" />
-        <Row label="Auto-refund" value="Bounty refunds if unclaimed in 7d" />
+        {isSol ? (
+          <Row label="Auto-refund" value="Bounty refunds if unclaimed in 7d" />
+        ) : (
+          <Row label="If rejected" value="Staked XP returns to you" />
+        )}
         <div className="border-t border-[color:var(--color-border)] mt-1" />
-        <Row label="Total escrow" value={`${reward.toFixed(2)} SOL · ~${formatUsd(usdEstimate)}`} bold />
+        {isSol ? (
+          <Row
+            label="Total escrow"
+            value={`${rewardSol.toFixed(2)} SOL · ~${formatUsd(usdEstimate)}`}
+            bold
+          />
+        ) : (
+          <Row label="Staked" value={formatXp(rewardXp)} bold />
+        )}
       </Card>
     </div>
   );
@@ -586,7 +761,15 @@ function PostedSuccess({
         Your bounty is live
       </h2>
       <p className="text-sm text-[color:var(--color-muted)] mt-2 max-w-[280px]">
-        {bounty.reward_sol.toFixed(2)} SOL is escrowed. The claimer pool is being notified.
+        {bounty.reward_type === "xp" ? (
+          <>
+            {formatReward(bounty)} is staked from your balance. The claimer pool is being notified.
+          </>
+        ) : (
+          <>
+            {bounty.reward_sol.toFixed(2)} SOL is escrowed. The claimer pool is being notified.
+          </>
+        )}
       </p>
       <div className="mt-6 w-full max-w-[320px] grid gap-2">
         <Button fullWidth size="xl" onClick={onDone}>

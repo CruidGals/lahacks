@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { Card } from "../_components/Card";
 import { Skeleton } from "../_components/Skeleton";
-import { CoinIcon, FireIcon, TrophyIcon } from "../_components/icons";
+import { FireIcon, TrophyIcon } from "../_components/icons";
 import { getCurrentUserId, getLeaderboard } from "../../lib/api";
 import type { LeaderboardEntry, Timeframe } from "../../lib/types";
+import { formatXp } from "../../lib/format";
 
 const TIMEFRAMES: { id: Timeframe; label: string }[] = [
   { id: "week", label: "This week" },
@@ -46,7 +47,7 @@ export default function LeaderboardPage() {
               Leaderboard
             </h1>
             <p className="text-xs text-[color:var(--color-muted)]">
-              Top earners cleaning up their cities
+              Top cleaners by earned XP
             </p>
           </div>
         </div>
@@ -142,8 +143,8 @@ export default function LeaderboardPage() {
                   </p>
                 </div>
                 <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
-                  <CoinIcon width={14} height={14} />
-                  {e.total_earned_sol.toFixed(2)}
+                  <FireIcon width={14} height={14} />
+                  {formatXp(e.total_xp)}
                 </span>
               </Card>
             );
@@ -181,7 +182,7 @@ function Podium({
         @{entry.handle}
       </p>
       <p className="text-[11px] tabular text-[color:var(--color-brand-600)] font-bold">
-        {entry.total_earned_sol.toFixed(2)} SOL
+        {formatXp(entry.total_xp)}
       </p>
       <div
         className={`mt-2 w-full rounded-t-[14px] flex items-end justify-center pb-2 ${height}`}
@@ -198,5 +199,3 @@ function Podium({
   );
 }
 
-// Suppress unused-import warning in case FireIcon is removed later
-void FireIcon;
