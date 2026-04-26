@@ -20,42 +20,63 @@ export type Database = {
           claimer_id: string | null
           created_at: string | null
           description: string | null
+          difficulty_score: number | null
           escrow_tx_sig: string | null
           id: string
+          importance_score: number | null
           lat: number
           lng: number
           poster_id: string | null
           reference_video_url: string | null
           reward_lamports: number
+          reward_type: Database["public"]["Enums"]["reward_type"]
+          reward_xp: number | null
           status: Database["public"]["Enums"]["bounty_status"] | null
+          title: string | null
+          xp_award: number
+          xp_reasoning: string | null
         }
         Insert: {
           claimed_at?: string | null
           claimer_id?: string | null
           created_at?: string | null
           description?: string | null
+          difficulty_score?: number | null
           escrow_tx_sig?: string | null
           id?: string
+          importance_score?: number | null
           lat: number
           lng: number
           poster_id?: string | null
           reference_video_url?: string | null
-          reward_lamports: number
+          reward_lamports?: number
+          reward_type?: Database["public"]["Enums"]["reward_type"]
+          reward_xp?: number | null
           status?: Database["public"]["Enums"]["bounty_status"] | null
+          title?: string | null
+          xp_award?: number
+          xp_reasoning?: string | null
         }
         Update: {
           claimed_at?: string | null
           claimer_id?: string | null
           created_at?: string | null
           description?: string | null
+          difficulty_score?: number | null
           escrow_tx_sig?: string | null
           id?: string
+          importance_score?: number | null
           lat?: number
           lng?: number
           poster_id?: string | null
           reference_video_url?: string | null
           reward_lamports?: number
+          reward_type?: Database["public"]["Enums"]["reward_type"]
+          reward_xp?: number | null
           status?: Database["public"]["Enums"]["bounty_status"] | null
+          title?: string | null
+          xp_award?: number
+          xp_reasoning?: string | null
         }
         Relationships: [
           {
@@ -205,24 +226,36 @@ export type Database = {
       users: {
         Row: {
           created_at: string | null
+          display_name: string | null
           id: string
+          total_earned_lamports: number
+          total_earned_xp: number
           verified: boolean | null
           wallet_address: string
           world_id_hash: string | null
+          xp: number
         }
         Insert: {
           created_at?: string | null
+          display_name?: string | null
           id?: string
+          total_earned_lamports?: number
+          total_earned_xp?: number
           verified?: boolean | null
           wallet_address: string
           world_id_hash?: string | null
+          xp?: number
         }
         Update: {
           created_at?: string | null
+          display_name?: string | null
           id?: string
+          total_earned_lamports?: number
+          total_earned_xp?: number
           verified?: boolean | null
           wallet_address?: string
           world_id_hash?: string | null
+          xp?: number
         }
         Relationships: []
       }
@@ -231,11 +264,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      add_earned_lamports: {
+        Args: { p_user_id: string; p_lamports: number }
+        Returns: number
+      }
+      award_xp: {
+        Args: { p_user_id: string; p_amount: number }
+        Returns: number
+      }
+      refund_xp: {
+        Args: { p_user_id: string; p_amount: number }
+        Returns: number
+      }
+      stake_xp: {
+        Args: { p_user_id: string; p_amount: number }
+        Returns: number
+      }
     }
     Enums: {
       bounty_status: "open" | "claimed" | "completed" | "expired"
       cleanup_status: "pending" | "verified" | "rejected"
+      reward_type: "sol" | "xp"
       session_status: "active" | "completed" | "cancelled"
     }
     CompositeTypes: {
@@ -366,6 +415,7 @@ export const Constants = {
     Enums: {
       bounty_status: ["open", "claimed", "completed", "expired"],
       cleanup_status: ["pending", "verified", "rejected"],
+      reward_type: ["sol", "xp"],
       session_status: ["active", "completed", "cancelled"],
     },
   },

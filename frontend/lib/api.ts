@@ -15,6 +15,7 @@ import type {
   CleanupSubmission,
   GeoPing,
   LeaderboardEntry,
+  RewardType,
   Session,
   Timeframe,
   User,
@@ -34,7 +35,14 @@ type BackendBounty = {
   lat: number;
   lng: number;
   reward_lamports: number;
+  reward_type: RewardType;
   reward_sol: number;
+  reward_xp: number | null;
+  xp_award: number;
+  difficulty_score: number | null;
+  importance_score: number | null;
+  xp_reasoning: string | null;
+  title: string | null;
   description: string | null;
   reference_video_url: string | null;
   status: BackendBountyStatus;
@@ -72,14 +80,20 @@ type BackendCleanup = {
 };
 
 type BackendUserMe = ApiUser & {
+  xp: number;
+  total_earned_xp: number;
   total_earned_sol: number;
+  total_earned_lamports: number;
   total_completed: number;
   current_streak: number;
   wallet: { address: string; balance_sol: number };
   recent_completed: Array<{
     bounty_id: string;
     title: string;
+    reward_type: RewardType;
     reward_sol: number;
+    reward_xp: number | null;
+    xp_award: number;
     completed_at: string;
   }>;
 };
@@ -89,6 +103,7 @@ type BackendLeaderboardItem = {
   user_id: string;
   handle: string;
   avatar_color: string;
+  total_xp: number;
   total_earned_sol: number;
   total_completed: number;
   wallet_address: string;
@@ -226,16 +241,23 @@ function mapBounty(b: BackendBounty): Bounty {
     ? addHours(b.claimed_at, CLAIM_LOCK_HOURS)
     : undefined;
   const posterId = b.poster?.id ?? b.poster_id ?? "anon";
+  const rewardType: RewardType = b.reward_type ?? "sol";
+  const rewardSol = b.reward_sol ?? 0;
 
   return {
     id: b.id,
-    title: deriveTitle(b.description),
+    title: b.title?.trim() || deriveTitle(b.description),
     description: deriveDescriptionBody(b.description),
     lat: b.lat,
     lng: b.lng,
     address: deriveAddress(b.lat, b.lng),
-    reward_sol: b.reward_sol ?? 0,
-    reward_usd_estimate: Math.round((b.reward_sol ?? 0) * SOL_USD_RATE),
+    reward_type: rewardType,
+    reward_sol: rewardSol,
+    reward_xp: b.reward_xp ?? null,
+    xp_award: b.xp_award ?? 0,
+    difficulty_score: b.difficulty_score ?? null,
+    importance_score: b.importance_score ?? null,
+    reward_usd_estimate: Math.round(rewardSol * SOL_USD_RATE),
     status,
     urgency_score: b.urgency_score ?? 0,
     category: deriveCategory(b.description),
@@ -273,21 +295,43 @@ export async function getBounty(id: string): Promise<Bounty | null> {
   }
 }
 
-export async function postBounty(input: {
+export type PostBountyInput = {
   title: string;
   description: string;
   lat: number;
   lng: number;
   address: string;
-  reward_sol: number;
   category: Bounty["category"];
   reference_video_url: string | null;
   reference_thumbnail_url: string | null;
-}): Promise<Bounty> {
+} & (
+  | { reward_type: "sol"; reward_sol: number; reward_xp?: undefined }
+  | { reward_type: "xp"; reward_xp: number; reward_sol?: undefined }
+);
+
+export type XpEvaluation = {
+  xp_award: number;
+  difficulty_score: number;
+  importance_score: number;
+  reasoning: string;
+  source: "ai" | "fallback";
+};
+
+export type PostBountyResult = {
+  bounty: Bounty;
+  xp_evaluation: XpEvaluation;
+};
+
+export async function postBounty(
+  input: PostBountyInput
+): Promise<PostBountyResult> {
   await ensureVerified();
 
   // The backend stores only `description`, so we encode the title on the first
   // line and the category as a `#category:foo` tag. mapBounty() reverses this.
+  // We *also* send `title` and `category` as top-level fields so the AI XP
+  // pipeline can use them, but the legacy encoding stays for SOL bounties
+  // already in the DB that rely on it.
   const description = [
     input.title.trim(),
     input.description.trim(),
@@ -296,21 +340,33 @@ export async function postBounty(input: {
     .filter(Boolean)
     .join("\n\n");
 
-  const json = await api<{ bounty: BackendBounty; escrow_tx_sig: string | null }>(
-    "/api/bounties",
-    {
-      method: "POST",
-      body: {
-        lat: input.lat,
-        lng: input.lng,
-        reward_sol: input.reward_sol,
-        description,
-        reference_video_url: input.reference_video_url ?? null,
-      },
-    }
-  );
+  const body: Record<string, unknown> = {
+    lat: input.lat,
+    lng: input.lng,
+    title: input.title.trim() || undefined,
+    category: input.category,
+    description,
+    reference_video_url: input.reference_video_url ?? null,
+  };
+  if (input.reward_type === "sol") {
+    body.reward_sol = input.reward_sol;
+  } else {
+    body.reward_xp = input.reward_xp;
+  }
 
-  return mapBounty(json.bounty);
+  const json = await api<{
+    bounty: BackendBounty;
+    escrow_tx_sig: string | null;
+    xp_evaluation: XpEvaluation;
+  }>("/api/bounties", {
+    method: "POST",
+    body,
+  });
+
+  return {
+    bounty: mapBounty(json.bounty),
+    xp_evaluation: json.xp_evaluation,
+  };
 }
 
 export async function claimBounty(id: string): Promise<Bounty> {
@@ -543,6 +599,8 @@ export async function getMe(): Promise<User> {
     avatar_color: avatarColorFor(u.id),
     world_id_verified: Boolean(u.verified),
     joined_at: u.created_at ?? new Date().toISOString(),
+    xp: u.xp ?? 0,
+    total_earned_xp: u.total_earned_xp ?? 0,
     total_earned_sol: u.total_earned_sol,
     total_completed: u.total_completed,
     current_streak: u.current_streak,
@@ -550,7 +608,15 @@ export async function getMe(): Promise<User> {
       address: u.wallet?.address ?? u.wallet_address,
       balance_sol: u.wallet?.balance_sol ?? u.total_earned_sol,
     },
-    recent_completed: u.recent_completed ?? [],
+    recent_completed: (u.recent_completed ?? []).map((c) => ({
+      bounty_id: c.bounty_id,
+      title: c.title,
+      reward_type: c.reward_type ?? "sol",
+      reward_sol: c.reward_sol ?? 0,
+      reward_xp: c.reward_xp ?? null,
+      xp_award: c.xp_award ?? 0,
+      completed_at: c.completed_at,
+    })),
   };
 }
 
@@ -560,7 +626,7 @@ export async function getCurrentUserId(): Promise<string> {
 }
 
 export async function getLeaderboard(
-  tf: Timeframe = "week"
+  tf: Timeframe = "all"
 ): Promise<LeaderboardEntry[]> {
   const json = await api<{ timeframe: Timeframe; items: BackendLeaderboardItem[] }>(
     "/api/leaderboard",
@@ -571,6 +637,7 @@ export async function getLeaderboard(
     user_id: entry.user_id,
     handle: entry.handle,
     avatar_color: entry.avatar_color,
+    total_xp: entry.total_xp ?? 0,
     total_earned_sol: entry.total_earned_sol,
     total_completed: entry.total_completed,
   }));

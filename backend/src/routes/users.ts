@@ -165,10 +165,11 @@ usersRouter.get('/me', async (req, res) => {
     return;
   }
 
-  // Bounties this user has completed (claimed by them, status=completed)
   const { data: completedBounties, error: completedError } = await supabase
     .from('bounties')
-    .select('id, description, reward_lamports, claimed_at')
+    .select(
+      'id, title, description, reward_lamports, reward_type, reward_xp, xp_award, claimed_at'
+    )
     .eq('claimer_id', user.id)
     .eq('status', 'completed')
     .order('claimed_at', { ascending: false });
@@ -179,19 +180,36 @@ usersRouter.get('/me', async (req, res) => {
   }
 
   const completed = completedBounties ?? [];
-  const totalEarnedSol = completed.reduce(
-    (sum, bounty) => sum + rewardLamportsToSol(bounty.reward_lamports),
+
+  // Lifetime totals come from the user row whenever possible -- those
+  // counters are written transactionally by the verification handler.
+  // We fall back to summing completed bounties for users who pre-existed
+  // the XP migration and don't have lifetime totals populated yet.
+  const lamportsFromUser = user.total_earned_lamports ?? 0;
+  const lamportsFromCompleted = completed.reduce(
+    (sum, b) => sum + (b.reward_lamports ?? 0),
     0
   );
+  const totalEarnedLamports = Math.max(lamportsFromUser, lamportsFromCompleted);
+  const totalEarnedSol = rewardLamportsToSol(totalEarnedLamports);
+
+  const xpFromUser = user.total_earned_xp ?? 0;
+  const xpFromCompleted = completed.reduce(
+    (sum, b) => sum + (b.xp_award ?? 0),
+    0
+  );
+  const totalEarnedXp = Math.max(xpFromUser, xpFromCompleted);
 
   const recent = completed.slice(0, 8).map((bounty) => ({
     bounty_id: bounty.id,
-    title: deriveTitle(bounty.description),
-    reward_sol: rewardLamportsToSol(bounty.reward_lamports),
+    title: bounty.title ?? deriveTitle(bounty.description),
+    reward_type: bounty.reward_type ?? 'sol',
+    reward_sol: rewardLamportsToSol(bounty.reward_lamports ?? 0),
+    reward_xp: bounty.reward_xp ?? null,
+    xp_award: bounty.xp_award ?? 0,
     completed_at: bounty.claimed_at ?? new Date().toISOString()
   }));
 
-  // Streak placeholder — count active days within the last week
   const lastWeek = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const activeDays = new Set(
     completed
@@ -214,7 +232,10 @@ usersRouter.get('/me', async (req, res) => {
   res.json({
     user: {
       ...user,
+      xp: user.xp ?? 0,
+      total_earned_xp: totalEarnedXp,
       total_earned_sol: Number(totalEarnedSol.toFixed(4)),
+      total_earned_lamports: totalEarnedLamports,
       total_completed: completed.length,
       current_streak: activeDays.size,
       wallet: {

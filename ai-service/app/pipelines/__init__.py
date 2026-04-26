@@ -37,6 +37,7 @@ from app.pipelines.spec_pipeline import (
     build_ground_truth_spec,
     extract_spec_candidates,
 )
+from app.pipelines.xp_pipeline import XpReward, run_xp_pipeline
 
 __all__ = [
     "Bbox",
@@ -56,10 +57,12 @@ __all__ = [
     "SpecItem",
     "SpecPreviewFrame",
     "TrashItem",
+    "XpReward",
     "build_dino_output_from_video",
     "build_ground_truth_spec",
     "extract_spec_candidates",
     "run_cleanup_pipeline",
     "run_disposal_pipeline",
     "run_reference_pipeline",
+    "run_xp_pipeline",
 ]
