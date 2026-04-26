@@ -1,5 +1,38 @@
+import type { Currency } from "./types";
+
 export function formatSol(amount: number): string {
-  return `${amount.toFixed(amount < 1 ? 2 : 2)} SOL`;
+  return `${amount.toFixed(2)} SOL`;
+}
+
+export function formatWld(amount: number): string {
+  return `${amount.toFixed(2)} WLD`;
+}
+
+/**
+ * Render a reward amount with its currency suffix (e.g. "1.25 WLD").
+ * Centralizing this keeps every card / sheet / page in lockstep when we add
+ * more currencies later.
+ */
+export function formatReward(amount: number, currency: Currency): string {
+  return currency === "SOL" ? formatSol(amount) : formatWld(amount);
+}
+
+export function rewardUnit(currency: Currency): string {
+  return currency;
+}
+
+/**
+ * Rough USD spot rates used for ranking / tooltips. These intentionally live
+ * in one place so we can swap them for a live oracle later. The backend uses
+ * the same constants in `routes/leaderboard.ts`.
+ */
+export const SPOT_USD: Record<Currency, number> = {
+  SOL: 150,
+  WLD: 2,
+};
+
+export function rewardUsd(amount: number, currency: Currency): number {
+  return amount * SPOT_USD[currency];
 }
 
 export function formatUsd(amount: number): string {

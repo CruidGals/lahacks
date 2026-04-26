@@ -18,9 +18,22 @@ import {
   getCleanup,
 } from "../../../../lib/api";
 import type { Bounty, VerificationResult } from "../../../../lib/types";
+import { formatReward } from "../../../../lib/format";
 import { useToast } from "../../../_components/Toast";
 
-const CHECK_LABELS = [
+function escrowLabel(b: Bounty | null): string {
+  if (!b) return "Releasing escrow…";
+  return b.reward_currency === "SOL"
+    ? "Releasing escrow on Solana…"
+    : "Releasing escrow on World Chain…";
+}
+
+function normalizedReward(amount: number, currency: Bounty["reward_currency"]): number {
+  // Temporary UI normalization: legacy WLD displays are 1000x too high.
+  return currency === "WLD" ? amount / 1000 : amount;
+}
+
+const STATIC_CHECK_LABELS = [
   "Receiving submission…",
   "Verifying GPS trajectory…",
   "Cross-checking cell location…",
@@ -28,7 +41,6 @@ const CHECK_LABELS = [
   "Comparing against reference video…",
   "Detecting before/after change…",
   "Cross-referencing Street View…",
-  "Releasing escrow on Solana…",
 ];
 
 export default function SubmittedPage({
@@ -42,6 +54,7 @@ export default function SubmittedPage({
   const [bounty, setBounty] = useState<Bounty | null>(null);
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
+  const checkLabels = [...STATIC_CHECK_LABELS, escrowLabel(bounty)];
 
   useEffect(() => {
     getBounty(id).then(setBounty);
@@ -51,10 +64,10 @@ export default function SubmittedPage({
   useEffect(() => {
     if (result) return;
     const t = window.setInterval(() => {
-      setStepIdx((i) => Math.min(i + 1, CHECK_LABELS.length - 1));
+      setStepIdx((i) => Math.min(i + 1, checkLabels.length - 1));
     }, 450);
     return () => window.clearInterval(t);
-  }, [result]);
+  }, [result, checkLabels.length]);
 
   // Poll the backend for the cleanup status
   useEffect(() => {
@@ -86,12 +99,18 @@ export default function SubmittedPage({
 
   useEffect(() => {
     if (result?.passed && bounty) {
-      toast(`+${bounty.reward_sol.toFixed(2)} SOL paid out`, {
+      toast(
+        `+${formatReward(
+          normalizedReward(bounty.reward, bounty.reward_currency),
+          bounty.reward_currency
+        )} paid out`,
+        {
         variant: "success",
         description: result.reward_tx_signature
           ? `Tx ${result.reward_tx_signature.slice(0, 12)}…`
           : undefined,
-      });
+        }
+      );
     }
   }, [result, bounty, toast]);
 
@@ -114,7 +133,9 @@ export default function SubmittedPage({
       <div className="px-4 pt-2 flex-1 flex flex-col">
         <Card className="p-6 relative overflow-hidden">
           <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-[color:var(--color-brand-50)] blur-2xl opacity-70" />
-          {!result && <VerifyingState stepIdx={stepIdx} />}
+          {!result && (
+            <VerifyingState stepIdx={stepIdx} labels={checkLabels} />
+          )}
           {result?.passed && bounty && (
             <SuccessState bounty={bounty} result={result} />
           )}
@@ -127,7 +148,7 @@ export default function SubmittedPage({
           </h3>
           <Card className="p-4 grid gap-2.5">
             {(result?.checks ??
-              CHECK_LABELS.slice(1, 7).map((label, i) => ({
+              checkLabels.slice(1, 7).map((label, i) => ({
                 label,
                 status: i <= stepIdx - 1 ? "pass" : "skipped",
               }))).map((c, i) => (
@@ -169,7 +190,13 @@ export default function SubmittedPage({
   );
 }
 
-function VerifyingState({ stepIdx }: { stepIdx: number }) {
+function VerifyingState({
+  stepIdx,
+  labels,
+}: {
+  stepIdx: number;
+  labels: string[];
+}) {
   return (
     <div className="relative">
       <div className="flex items-center gap-3">
@@ -184,12 +211,12 @@ function VerifyingState({ stepIdx }: { stepIdx: number }) {
         </div>
       </div>
       <p className="text-sm text-[color:var(--color-muted)] mt-3">
-        {CHECK_LABELS[stepIdx]}
+        {labels[stepIdx]}
       </p>
       <div className="mt-3 h-1.5 rounded-full bg-[color:var(--color-surface)] overflow-hidden">
         <div
           className="h-full bg-[color:var(--color-brand-500)] transition-[width] duration-300"
-          style={{ width: `${((stepIdx + 1) / CHECK_LABELS.length) * 100}%` }}
+          style={{ width: `${((stepIdx + 1) / labels.length) * 100}%` }}
         />
       </div>
     </div>
@@ -212,13 +239,17 @@ function SuccessState({
         <div>
           <Badge tone="brand" size="sm">Paid out</Badge>
           <h2 className="text-[22px] font-semibold tracking-tight mt-1.5 leading-tight">
-            +{bounty.reward_sol.toFixed(2)} SOL
+            +{formatReward(
+              normalizedReward(bounty.reward, bounty.reward_currency),
+              bounty.reward_currency
+            )}
           </h2>
         </div>
       </div>
       <p className="text-sm text-[color:var(--color-muted)] mt-3">
         Verified at <span className="tabular">{Math.round(result.confidence * 100)}%</span>{" "}
-        confidence. Smart contract released the bounty to your wallet.
+        confidence. Bounty released on{" "}
+        {bounty.reward_currency === "SOL" ? "Solana" : "World Chain"}.
       </p>
       <div className="mt-3 flex items-center gap-2 text-xs">
         <CoinIcon width={14} height={14} className="text-[color:var(--color-brand-600)]" />

@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
-import { rewardLamportsToSol } from '../lib/bounties.js';
+import { rewardLamportsToSol, rewardMicroToWld } from '../lib/bounties.js';
+
+// Rough USD conversion rates for combined ranking. These are display-only;
+// the source of truth is always per-currency totals. Keep in sync with
+// `frontend/lib/format.ts` SPOT_USD so both ends agree on USD totals.
+const WLD_USD = 2;
+const SOL_USD = 150;
 
 export const leaderboardRouter = Router();
 
@@ -33,7 +39,7 @@ leaderboardRouter.get('/', async (req, res) => {
   let query = supabase
     .from('bounties')
     .select(
-      'claimer_id, reward_lamports, claimed_at, claimer:users!bounties_claimer_id_fkey(id, wallet_address)'
+      'claimer_id, reward_currency, reward_lamports, claimed_at, claimer:users!bounties_claimer_id_fkey(id, wallet_address, world_address)'
     )
     .eq('status', 'completed')
     .not('claimer_id', 'is', null);
@@ -52,7 +58,9 @@ leaderboardRouter.get('/', async (req, res) => {
   type Aggregate = {
     user_id: string;
     wallet_address: string;
-    total_lamports: number;
+    world_address: string;
+    total_micro_wld: number;
+    total_lamports_sol: number;
     total_completed: number;
   };
 
@@ -60,31 +68,57 @@ leaderboardRouter.get('/', async (req, res) => {
 
   for (const row of data ?? []) {
     if (!row.claimer_id) continue;
+    const claimer =
+      (row as unknown as {
+        claimer?: { wallet_address?: string; world_address?: string | null };
+      }).claimer ?? {};
     const existing = map.get(row.claimer_id) ?? {
       user_id: row.claimer_id,
-      // claimer is a single nested object thanks to the FK
-      wallet_address:
-        (row as unknown as { claimer?: { wallet_address?: string } }).claimer
-          ?.wallet_address ?? '',
-      total_lamports: 0,
+      wallet_address: claimer.wallet_address ?? '',
+      world_address: claimer.world_address ?? '',
+      total_micro_wld: 0,
+      total_lamports_sol: 0,
       total_completed: 0
     };
-    existing.total_lamports += row.reward_lamports;
+    // Legacy rows may have null `reward_currency`; those are SOL lamports.
+    if (row.reward_currency === 'SOL' || row.reward_currency === null) {
+      existing.total_lamports_sol += row.reward_lamports;
+    } else {
+      existing.total_micro_wld += row.reward_lamports;
+    }
     existing.total_completed += 1;
     map.set(row.claimer_id, existing);
   }
 
   const ranked = Array.from(map.values())
-    .sort((a, b) => b.total_lamports - a.total_lamports)
+    .map((entry) => {
+      const totalWld = rewardMicroToWld(entry.total_micro_wld);
+      const totalSol = rewardLamportsToSol(entry.total_lamports_sol);
+      return {
+        ...entry,
+        total_earned_wld: Number(totalWld.toFixed(4)),
+        total_earned_sol: Number(totalSol.toFixed(4)),
+        total_earned_usd: Number(
+          (totalWld * WLD_USD + totalSol * SOL_USD).toFixed(2)
+        )
+      };
+    })
+    .sort((a, b) => b.total_earned_usd - a.total_earned_usd)
     .slice(0, limit)
     .map((entry, index) => ({
       rank: index + 1,
       user_id: entry.user_id,
-      handle: shortHandle(entry.user_id, entry.wallet_address),
+      handle: shortHandle(
+        entry.user_id,
+        entry.world_address || entry.wallet_address
+      ),
       avatar_color: avatarColorFor(entry.user_id),
-      total_earned_sol: Number(rewardLamportsToSol(entry.total_lamports).toFixed(4)),
+      total_earned_wld: entry.total_earned_wld,
+      total_earned_sol: entry.total_earned_sol,
+      total_earned_usd: entry.total_earned_usd,
       total_completed: entry.total_completed,
-      wallet_address: entry.wallet_address
+      wallet_address: entry.wallet_address,
+      world_address: entry.world_address || null
     }));
 
   res.json({ timeframe, items: ranked });

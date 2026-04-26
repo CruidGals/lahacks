@@ -12,7 +12,9 @@ import { BountyPreviewSheet } from "./_components/BountyPreviewSheet";
 import {
   categoryLabel,
   formatDistance,
+  formatReward,
   haversineMeters,
+  rewardUsd,
 } from "../lib/format";
 import { Sheet } from "./_components/Sheet";
 
@@ -33,11 +35,12 @@ const CATEGORY_OPTIONS = [
   "other",
 ] as const;
 
+// Buckets are USD-equivalent thresholds so they work across both currencies.
 const REWARD_BUCKETS = [
-  { id: "any", label: "Any reward", min: 0 },
-  { id: "0.1", label: "0.10 SOL+", min: 0.1 },
-  { id: "0.25", label: "0.25 SOL+", min: 0.25 },
-  { id: "0.5", label: "0.50 SOL+", min: 0.5 },
+  { id: "any", label: "Any reward", minUsd: 0 },
+  { id: "5", label: "$5+", minUsd: 5 },
+  { id: "20", label: "$20+", minUsd: 20 },
+  { id: "50", label: "$50+", minUsd: 50 },
 ] as const;
 
 export default function MapHome() {
@@ -61,12 +64,12 @@ export default function MapHome() {
 
   const filtered = useMemo(() => {
     if (!bounties) return [];
-    const minReward =
-      REWARD_BUCKETS.find((r) => r.id === rewardFilter)?.min ?? 0;
+    const minUsd =
+      REWARD_BUCKETS.find((r) => r.id === rewardFilter)?.minUsd ?? 0;
     return bounties.filter((b) => {
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
       if (categoryFilter !== "all" && b.category !== categoryFilter) return false;
-      if (b.reward_sol < minReward) return false;
+      if (rewardUsd(b.reward, b.reward_currency) < minUsd) return false;
       return true;
     });
   }, [bounties, statusFilter, categoryFilter, rewardFilter]);
@@ -252,7 +255,7 @@ function NearbyRail({
             >
               <div className="flex items-center justify-between">
                 <span className="text-[15px] font-bold tabular text-[color:var(--color-brand-600)]">
-                  {b.reward_sol.toFixed(2)} SOL
+                  {formatReward(b.reward, b.reward_currency)}
                 </span>
                 {dist && (
                   <span className="text-[11px] text-[color:var(--color-muted)] tabular">

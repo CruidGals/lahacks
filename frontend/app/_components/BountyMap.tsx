@@ -25,10 +25,19 @@ const STATUS_COLOR: Record<Bounty["status"], string> = {
   expired: "#9aa0a6",
 };
 
-function pinSizeForReward(reward: number): number {
-  if (reward >= 0.4) return 56;
-  if (reward >= 0.2) return 48;
-  if (reward >= 0.1) return 40;
+// Per-currency thresholds for pin size. SOL and WLD have different
+// dollar-per-unit values, so we tune brackets independently to keep the
+// "this is a big bounty" visual signal honest.
+function pinSizeForReward(b: Bounty): number {
+  if (b.reward_currency === "SOL") {
+    if (b.reward >= 0.4) return 56;
+    if (b.reward >= 0.2) return 48;
+    if (b.reward >= 0.1) return 40;
+    return 36;
+  }
+  if (b.reward >= 10) return 56;
+  if (b.reward >= 5) return 48;
+  if (b.reward >= 2) return 40;
   return 36;
 }
 
@@ -39,9 +48,17 @@ const TAIL_PROTRUSION_PX = 6;
 
 function makeBountyIcon(b: Bounty): L.DivIcon {
   const color = STATUS_COLOR[b.status];
-  const size = pinSizeForReward(b.reward_sol);
-  const fontSize = size >= 48 ? 12 : 11;
-  const label = b.reward_sol >= 1 ? b.reward_sol.toFixed(1) : b.reward_sol.toFixed(2).replace(/^0/, "");
+  const size = pinSizeForReward(b);
+  const fontSize = size >= 48 ? 11 : 10;
+  const number =
+    b.reward >= 100
+      ? Math.round(b.reward).toString()
+      : b.reward >= 10
+        ? b.reward.toFixed(1)
+        : b.reward >= 1
+          ? b.reward.toFixed(1)
+          : b.reward.toFixed(2).replace(/^0/, "");
+  const label = `${number}<span style="font-size:${Math.max(8, fontSize - 2)}px;opacity:0.85;margin-left:1px">${b.reward_currency}</span>`;
   return L.divIcon({
     className: "",
     iconSize: [size, size],

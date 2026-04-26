@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
-import { releaseBountyToClaimer } from '../lib/solana.js';
 import { analyzeTrajectory } from '../lib/trajectory.js';
+import {
+  releaseBountyToClaimer,
+  refundEscrowToPoster
+} from '../lib/solana.js';
+import { transferWldFromVault, WldConfigError, WldOnchainError } from '../lib/wld.js';
 
 export const cleanupRouter = Router();
 
@@ -392,21 +396,44 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       return;
     }
 
+    // Legacy rows with null `reward_currency` are SOL.
+    const currency = bounty.reward_currency ?? 'SOL';
     let payoutTxSig: string;
     try {
-      payoutTxSig = await releaseBountyToClaimer({
-        bountyId: bounty.id,
-        recipientWallet: claimer.wallet_address,
-        cleanupId: cleanup.id,
-        rewardLamports: bounty.reward_lamports
-      });
+      if (currency === 'SOL') {
+        if (!claimer.wallet_address) {
+          throw new Error('Claimer has no Solana wallet_address.');
+        }
+        payoutTxSig = await releaseBountyToClaimer({
+          bountyId: bounty.id,
+          recipientWallet: claimer.wallet_address,
+          cleanupId: cleanup.id,
+          rewardLamports: bounty.reward_lamports
+        });
+      } else {
+        if (!claimer.world_address) {
+          throw new WldOnchainError(
+            'Claimer has no linked world_address; complete `walletAuth` first.'
+          );
+        }
+        const transfer = await transferWldFromVault({
+          recipient: claimer.world_address,
+          microWld: bounty.reward_lamports,
+          bountyId: bounty.id,
+          cleanupId: cleanup.id,
+          kind: 'payout'
+        });
+        payoutTxSig = transfer.txHash;
+      }
     } catch (e) {
+      const isConfig = e instanceof WldConfigError;
+      const isChain = e instanceof WldOnchainError;
       console.warn(
-        'On-chain payout failed; using simulated payout signature for demo:',
+        `${currency} payout failed (${isConfig ? 'config' : isChain ? 'onchain' : 'unknown'}); using simulated payout signature for demo:`,
         e instanceof Error ? e.message : e
       );
-      // Demo fallback: don't block the verification flow if devnet vault is empty.
-      payoutTxSig = `simulated_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+      // Demo fallback: don't block the verification flow if vault is empty/unset.
+      payoutTxSig = `simulated_${currency.toLowerCase()}_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
     }
 
     const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
@@ -467,12 +494,75 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
+  if (!bounty.poster_id) {
+    res.status(500).json({ error: 'Bounty has no poster for refund.' });
+    return;
+  }
+
+  const { data: poster, error: posterError } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', bounty.poster_id)
+    .maybeSingle();
+
+  if (posterError) {
+    res.status(500).json({ error: 'Failed to load poster for refund.' });
+    return;
+  }
+  if (!poster) {
+    res.status(404).json({ error: 'Poster user not found for refund.' });
+    return;
+  }
+
+  // Legacy rows with null `reward_currency` are SOL.
+  const refundCurrency = bounty.reward_currency ?? 'SOL';
+  let refundTxSig: string;
+  try {
+    if (refundCurrency === 'SOL') {
+      if (!poster.wallet_address) {
+        throw new Error('Poster has no Solana wallet_address; cannot refund.');
+      }
+      refundTxSig = await refundEscrowToPoster({
+        bountyId: bounty.id,
+        posterWallet: poster.wallet_address,
+        cleanupId: cleanup.id,
+        rewardLamports: bounty.reward_lamports
+      });
+    } else {
+      if (!poster.world_address) {
+        throw new WldOnchainError(
+          'Poster has no linked world_address; cannot refund WLD.'
+        );
+      }
+      const transfer = await transferWldFromVault({
+        recipient: poster.world_address,
+        microWld: bounty.reward_lamports,
+        bountyId: bounty.id,
+        cleanupId: cleanup.id,
+        kind: 'refund'
+      });
+      refundTxSig = transfer.txHash;
+    }
+  } catch (e) {
+    const isConfig = e instanceof WldConfigError;
+    const isChain = e instanceof WldOnchainError;
+    console.warn(
+      `${refundCurrency} refund failed (${isConfig ? 'config' : isChain ? 'onchain' : 'unknown'}); using simulated refund signature for demo:`,
+      e instanceof Error ? e.message : e
+    );
+    refundTxSig = `simulated_refund_${refundCurrency.toLowerCase()}_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+  }
+
+  const verificationWithRefund = {
+    ...verificationJson,
+    refund_tx_sig: refundTxSig
+  };
   const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
     supabase
       .from('cleanups')
       .update({
         status: 'rejected',
-        verification_result: verificationJson,
+        verification_result: verificationWithRefund,
         confidence_score: effectiveResult.confidence ?? null
       })
       .eq('id', cleanup.id),
@@ -501,6 +591,6 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
   res.json({
     ok: true,
     verified: false,
-    refund_status: 'escrow_retained'
+    refund_status: 'escrow_lock_released'
   });
 });

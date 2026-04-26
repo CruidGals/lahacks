@@ -7,6 +7,7 @@ import { sessionRouter } from './routes/sessions.js';
 import { cleanupRouter } from './routes/cleanups.js';
 import { usersRouter } from './routes/users.js';
 import { leaderboardRouter } from './routes/leaderboard.js';
+import { paymentsRouter } from './routes/payments.js';
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use('/api/sessions', sessionRouter);
 app.use('/api/cleanups', cleanupRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/leaderboard', leaderboardRouter);
+app.use('/api/payments', paymentsRouter);
 
 const port = Number(process.env.PORT ?? 8080);
 app.listen(port, () => {

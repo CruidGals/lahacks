@@ -6,6 +6,7 @@ import { Skeleton } from "../_components/Skeleton";
 import { CoinIcon, FireIcon, TrophyIcon } from "../_components/icons";
 import { getCurrentUserId, getLeaderboard } from "../../lib/api";
 import type { LeaderboardEntry, Timeframe } from "../../lib/types";
+import { formatUsd } from "../../lib/format";
 
 const TIMEFRAMES: { id: Timeframe; label: string }[] = [
   { id: "week", label: "This week" },
@@ -141,10 +142,16 @@ export default function LeaderboardPage() {
                     {e.total_completed} cleanups
                   </p>
                 </div>
-                <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
-                  <CoinIcon width={14} height={14} />
-                  {e.total_earned_sol.toFixed(2)}
-                </span>
+                <div className="text-right">
+                  <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1 justify-end">
+                    <CoinIcon width={14} height={14} />
+                    {formatUsd(e.total_earned_usd)}
+                  </span>
+                  <p className="text-[10px] text-[color:var(--color-muted)] tabular">
+                    {e.total_earned_wld.toFixed(2)} WLD ·{" "}
+                    {e.total_earned_sol.toFixed(2)} SOL
+                  </p>
+                </div>
               </Card>
             );
           })}
@@ -181,7 +188,7 @@ function Podium({
         @{entry.handle}
       </p>
       <p className="text-[11px] tabular text-[color:var(--color-brand-600)] font-bold">
-        {entry.total_earned_sol.toFixed(2)} SOL
+        {formatUsd(entry.total_earned_usd)}
       </p>
       <div
         className={`mt-2 w-full rounded-t-[14px] flex items-end justify-center pb-2 ${height}`}

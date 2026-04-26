@@ -8,11 +8,13 @@
  */
 
 import { api, ensureUser, setCachedUser, type ApiUser } from "./http";
+import { SPOT_USD } from "./format";
 import type {
   Bounty,
   BountyCategory,
   BountyStatus,
   CleanupSubmission,
+  Currency,
   GeoPing,
   LeaderboardEntry,
   Session,
@@ -21,7 +23,6 @@ import type {
   VerificationResult,
 } from "./types";
 
-const SOL_USD_RATE = 153;
 const BOUNTY_LIFETIME_HOURS = 48;
 const CLAIM_LOCK_HOURS = 4;
 
@@ -34,7 +35,10 @@ type BackendBounty = {
   lat: number;
   lng: number;
   reward_lamports: number;
-  reward_sol: number;
+  reward_currency?: Currency | null;
+  reward?: number | null;
+  reward_sol?: number | null;
+  reward_wld?: number | null;
   description: string | null;
   reference_video_url: string | null;
   status: BackendBountyStatus;
@@ -45,6 +49,7 @@ type BackendBounty = {
   poster?: {
     id: string;
     wallet_address: string;
+    world_address?: string | null;
     verified: boolean | null;
   } | null;
 };
@@ -73,13 +78,23 @@ type BackendCleanup = {
 
 type BackendUserMe = ApiUser & {
   total_earned_sol: number;
+  total_earned_wld?: number;
   total_completed: number;
   current_streak: number;
-  wallet: { address: string; balance_sol: number };
+  world_address?: string | null;
+  wallet: {
+    address: string;
+    world_address?: string | null;
+    balance_sol: number;
+    balance_wld?: number;
+  };
   recent_completed: Array<{
     bounty_id: string;
     title: string;
-    reward_sol: number;
+    reward_sol?: number;
+    reward_wld?: number;
+    reward?: number;
+    reward_currency?: Currency;
     completed_at: string;
   }>;
 };
@@ -90,6 +105,8 @@ type BackendLeaderboardItem = {
   handle: string;
   avatar_color: string;
   total_earned_sol: number;
+  total_earned_wld?: number;
+  total_earned_usd?: number;
   total_completed: number;
   wallet_address: string;
 };
@@ -220,12 +237,48 @@ function addHours(iso: string | null, hours: number): string {
   return new Date(base + hours * 3600_000).toISOString();
 }
 
+/**
+ * Resolve the canonical reward amount + currency from whatever shape the
+ * backend returned. The backend is in the middle of a SOL → dual-currency
+ * migration, so a row may carry any of `reward_currency`/`reward`/
+ * `reward_sol`/`reward_wld`. We pick the most specific one available, default
+ * to SOL only for back-compat with legacy rows.
+ */
+function resolveReward(b: BackendBounty): { amount: number; currency: Currency } {
+  const currency: Currency =
+    b.reward_currency === "WLD" || b.reward_currency === "SOL"
+      ? b.reward_currency
+      : typeof b.reward_wld === "number" && b.reward_wld > 0
+        ? "WLD"
+        : "SOL";
+
+  let amount: number;
+  if (currency === "WLD") {
+    amount =
+      typeof b.reward_wld === "number"
+        ? b.reward_wld
+        : typeof b.reward === "number"
+          ? b.reward
+          : 0;
+  } else {
+    amount =
+      typeof b.reward_sol === "number"
+        ? b.reward_sol
+        : typeof b.reward === "number"
+          ? b.reward
+          : 0;
+  }
+
+  return { amount, currency };
+}
+
 function mapBounty(b: BackendBounty): Bounty {
   const status: BountyStatus = b.status;
   const claimLockUntil = b.claimed_at
     ? addHours(b.claimed_at, CLAIM_LOCK_HOURS)
     : undefined;
   const posterId = b.poster?.id ?? b.poster_id ?? "anon";
+  const { amount, currency } = resolveReward(b);
 
   return {
     id: b.id,
@@ -234,14 +287,17 @@ function mapBounty(b: BackendBounty): Bounty {
     lat: b.lat,
     lng: b.lng,
     address: deriveAddress(b.lat, b.lng),
-    reward_sol: b.reward_sol ?? 0,
-    reward_usd_estimate: Math.round((b.reward_sol ?? 0) * SOL_USD_RATE),
+    reward: amount,
+    reward_currency: currency,
+    reward_sol: currency === "SOL" ? amount : 0,
+    reward_wld: currency === "WLD" ? amount : 0,
+    reward_usd_estimate: Math.round(amount * SPOT_USD[currency]),
     status,
     urgency_score: b.urgency_score ?? 0,
     category: deriveCategory(b.description),
     poster: {
       id: posterId,
-      name: shortWallet(b.poster?.wallet_address),
+      name: shortWallet(b.poster?.world_address || b.poster?.wallet_address),
       avatar_color: avatarColorFor(posterId),
       is_org: Boolean(b.poster?.verified),
     },
@@ -273,28 +329,51 @@ export async function getBounty(id: string): Promise<Bounty | null> {
   }
 }
 
-export async function postBounty(input: {
+export type PostBountyInput = {
   title: string;
   description: string;
   lat: number;
   lng: number;
   address: string;
-  reward_sol: number;
+  reward: number;
+  currency: Currency;
   category: Bounty["category"];
   reference_video_url: string | null;
   reference_thumbnail_url: string | null;
-}): Promise<Bounty> {
-  await ensureVerified();
+};
 
-  // The backend stores only `description`, so we encode the title on the first
-  // line and the category as a `#category:foo` tag. mapBounty() reverses this.
-  const description = [
-    input.title.trim(),
-    input.description.trim(),
-    `#category:${input.category}`,
-  ]
+/**
+ * Encode the user-facing title + category into the single `description` field
+ * the backend stores. `mapBounty()` reverses this on read.
+ */
+function encodeBountyDescription(
+  title: string,
+  description: string,
+  category: Bounty["category"]
+): string {
+  return [title.trim(), description.trim(), `#category:${category}`]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * Create a SOL bounty in a single request. The backend escrows reward funds
+ * server-side from its funder keypair.
+ */
+export async function postBounty(input: PostBountyInput): Promise<Bounty> {
+  if (input.currency !== "SOL") {
+    throw new Error(
+      "postBounty() only handles SOL bounties. Use createWldBountyIntent() + confirmWldBounty() for WLD."
+    );
+  }
+
+  await ensureVerified();
+
+  const description = encodeBountyDescription(
+    input.title,
+    input.description,
+    input.category
+  );
 
   const json = await api<{ bounty: BackendBounty; escrow_tx_sig: string | null }>(
     "/api/bounties",
@@ -303,13 +382,86 @@ export async function postBounty(input: {
       body: {
         lat: input.lat,
         lng: input.lng,
-        reward_sol: input.reward_sol,
+        reward_currency: "SOL",
+        reward_sol: input.reward,
         description,
         reference_video_url: input.reference_video_url ?? null,
       },
     }
   );
 
+  return mapBounty(json.bounty);
+}
+
+// ---------- WLD payments (two-phase MiniKit flow) ----------
+
+export type WldBountyIntent = {
+  reference: string;
+  recipient: `0x${string}`;
+  token_address: `0x${string}`;
+  chain_id: number;
+  expected_amount_micro_wld: number;
+  /** Stringified `bigint` so the wei amount survives JSON. */
+  expected_amount_wei: string;
+  expected_amount_wld: number;
+  expires_at: number;
+};
+
+/**
+ * Phase 1 of the WLD bounty flow. Reserves a one-shot reference + recipient
+ * the client must use when calling `MiniKit.commandsAsync.pay`.
+ */
+export async function createWldBountyIntent(input: {
+  title: string;
+  description: string;
+  lat: number;
+  lng: number;
+  reward_wld: number;
+  category: Bounty["category"];
+  reference_video_url: string | null;
+}): Promise<WldBountyIntent> {
+  await ensureVerified();
+
+  const description = encodeBountyDescription(
+    input.title,
+    input.description,
+    input.category
+  );
+
+  return api<WldBountyIntent>("/api/payments/intent", {
+    method: "POST",
+    body: {
+      kind: "bounty_escrow",
+      bounty: {
+        lat: input.lat,
+        lng: input.lng,
+        reward_wld: input.reward_wld,
+        description,
+        reference_video_url: input.reference_video_url ?? null,
+      },
+    },
+  });
+}
+
+/**
+ * Phase 2 of the WLD bounty flow. Hands the on-chain `transactionId` from
+ * `MiniKit.pay` back to the backend, which verifies it through the Worldcoin
+ * Developer Portal and persists the bounty atomically.
+ */
+export async function confirmWldBounty(input: {
+  reference: string;
+  transaction_id: string;
+}): Promise<Bounty> {
+  const json = await api<{ bounty: BackendBounty; escrow_tx_sig: string | null }>(
+    "/api/payments/confirm",
+    {
+      method: "POST",
+      body: {
+        reference: input.reference,
+        transaction_id: input.transaction_id,
+      },
+    }
+  );
   return mapBounty(json.bounty);
 }
 
@@ -537,20 +689,60 @@ export async function getMe(): Promise<User> {
     created_at: u.created_at,
   });
 
+  const recentCompleted = (u.recent_completed ?? []).map((entry) => {
+    const currency: Currency =
+      entry.reward_currency === "SOL" || entry.reward_currency === "WLD"
+        ? entry.reward_currency
+        : typeof entry.reward_wld === "number" && entry.reward_wld > 0
+          ? "WLD"
+          : "SOL";
+
+    const amount =
+      currency === "WLD"
+        ? typeof entry.reward_wld === "number"
+          ? entry.reward_wld
+          : typeof entry.reward === "number"
+            ? entry.reward
+            : 0
+        : typeof entry.reward_sol === "number"
+          ? entry.reward_sol
+          : typeof entry.reward === "number"
+            ? entry.reward
+            : 0;
+
+    return {
+      bounty_id: entry.bounty_id,
+      title: entry.title,
+      reward: amount,
+      reward_currency: currency,
+      completed_at: entry.completed_at,
+    };
+  });
+
+  const worldAddress =
+    u.wallet?.world_address ?? u.world_address ?? null;
+  const handleWallet = worldAddress || u.wallet_address;
+
   return {
     id: u.id,
-    handle: shortWallet(u.wallet_address),
+    handle: shortWallet(handleWallet),
     avatar_color: avatarColorFor(u.id),
     world_id_verified: Boolean(u.verified),
     joined_at: u.created_at ?? new Date().toISOString(),
-    total_earned_sol: u.total_earned_sol,
+    total_earned_sol: u.total_earned_sol ?? 0,
+    total_earned_wld: u.total_earned_wld ?? 0,
     total_completed: u.total_completed,
     current_streak: u.current_streak,
     wallet: {
       address: u.wallet?.address ?? u.wallet_address,
-      balance_sol: u.wallet?.balance_sol ?? u.total_earned_sol,
+      world_address: worldAddress,
+      balance_sol: u.wallet?.balance_sol ?? u.total_earned_sol ?? 0,
+      balance_wld:
+        typeof u.wallet?.balance_wld === "number"
+          ? u.wallet.balance_wld
+          : undefined,
     },
-    recent_completed: u.recent_completed ?? [],
+    recent_completed: recentCompleted,
   };
 }
 
@@ -566,14 +758,24 @@ export async function getLeaderboard(
     "/api/leaderboard",
     { query: { timeframe: tf } }
   );
-  return json.items.map((entry) => ({
-    rank: entry.rank,
-    user_id: entry.user_id,
-    handle: entry.handle,
-    avatar_color: entry.avatar_color,
-    total_earned_sol: entry.total_earned_sol,
-    total_completed: entry.total_completed,
-  }));
+  return json.items.map((entry) => {
+    const sol = entry.total_earned_sol ?? 0;
+    const wld = entry.total_earned_wld ?? 0;
+    const usd =
+      typeof entry.total_earned_usd === "number"
+        ? entry.total_earned_usd
+        : sol * SPOT_USD.SOL + wld * SPOT_USD.WLD;
+    return {
+      rank: entry.rank,
+      user_id: entry.user_id,
+      handle: entry.handle,
+      avatar_color: entry.avatar_color,
+      total_earned_sol: sol,
+      total_earned_wld: wld,
+      total_earned_usd: usd,
+      total_completed: entry.total_completed,
+    };
+  });
 }
 
 // ---------- World ID ----------

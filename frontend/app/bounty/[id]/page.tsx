@@ -23,6 +23,7 @@ import {
   formatDistance,
   formatRelative,
   formatTimeLeft,
+  formatReward,
   formatUsd,
   haversineMeters,
   statusLabel,
@@ -174,10 +175,11 @@ export default function BountyDetailPage({
                 </p>
                 <p className="text-[28px] font-bold tabular tracking-tight text-[color:var(--color-brand-600)] flex items-center gap-1.5 leading-none mt-1">
                   <CoinIcon width={22} height={22} />
-                  {bounty.reward_sol.toFixed(2)} SOL
+                  {formatReward(bounty.reward, bounty.reward_currency)}
                 </p>
                 <p className="text-xs text-[color:var(--color-muted)] mt-1 tabular">
-                  ~{formatUsd(bounty.reward_usd_estimate)} · paid instantly on Solana
+                  ~{formatUsd(bounty.reward_usd_estimate)} · paid instantly on{" "}
+                  {bounty.reward_currency === "SOL" ? "Solana" : "World Chain"}
                 </p>
               </div>
               <span className="grid place-items-center w-12 h-12 rounded-full bg-[color:var(--color-brand-50)] text-[color:var(--color-brand-600)]">
@@ -236,7 +238,7 @@ export default function BountyDetailPage({
               <Step
                 n={4}
                 title="Get paid in seconds"
-                desc="AI compares before/after, then escrow releases SOL to your wallet."
+                desc={`AI compares before/after, then escrow releases ${bounty.reward_currency} to your wallet.`}
                 last
               />
             </Card>
