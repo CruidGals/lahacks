@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field
 from app.api.routes import router as pipelines_router
 from app.config import Settings, get_settings
 from app.models import VerifyAccepted, VerifyRequest
-from app.pipelines.fixture_verify import fixture_paths, run_fixture_verification
+from app.pipelines.fixture_verify import (
+    BOUNTY_ID_RE,
+    fixture_paths,
+    request_fixture_file_for_bounty,
+    run_fixture_verification,
+)
 from app.verification_progress import get_verification_progress
 from app.verify_pipeline import run_verification
 
@@ -77,14 +82,39 @@ def _media_type_for_video_path(path: Path) -> str:
     return "application/octet-stream"
 
 
-@app.get("/request-fixture")
-async def stream_request_fixture() -> FileResponse:
-    """Serve the poster reference video (``FIXTURE_REQUEST_VIDEO`` / last ``upload-fixture`` ``kind=request``).
+def _upload_suffix(filename: str | None, content_type: str) -> str:
+    if filename and "." in filename:
+        return "." + filename.rsplit(".", 1)[-1].lower()[:8]
+    ct = (content_type or "").lower()
+    if "mp4" in ct:
+        return ".mp4"
+    if "webm" in ct:
+        return ".webm"
+    if "quicktime" in ct:
+        return ".mov"
+    return ".mp4"
 
-    This URL can be stored as ``bounties.reference_video_url`` so claimers can replay
-    the *before* clip. One file per deployment is shared; production should use
-    per-bounty object storage instead.
-    """
+
+@app.get("/request-fixture/{bounty_id}")
+async def stream_request_fixture_for_bounty(bounty_id: str) -> FileResponse:
+    """Serve ``egRequest_{bounty_id}.*`` (poster reference for this bounty)."""
+
+    p = request_fixture_file_for_bounty(bounty_id)
+    if p is None or not p.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No request fixture for this bounty id. Upload with POST /upload-fixture kind=request bounty_id=…",
+        )
+    return FileResponse(
+        str(p),
+        media_type=_media_type_for_video_path(p),
+        filename=p.name,
+    )
+
+
+@app.get("/request-fixture")
+async def stream_request_fixture_legacy() -> FileResponse:
+    """Legacy: single default ``egRequest`` path when no per-bounty id is used."""
 
     request_path, _ = fixture_paths()
     if not request_path.is_file():
@@ -123,12 +153,15 @@ async def verify(
 class FixtureVerifyRequest(BaseModel):
     """Body for ``POST /verify-fixture``.
 
-    The backend only needs to identify which cleanup record the verdict
-    belongs to -- the reference + submission videos are hardcoded fixtures
-    on the AI service side.
+    ``bounty_id`` scopes on-disk files to ``egRequest_{bounty_id}.*`` and
+    ``egUserPost_{bounty_id}.*``; if omitted, legacy single-file paths are used.
     """
 
     cleanup_id: str = Field(..., min_length=1)
+    bounty_id: str | None = Field(
+        default=None,
+        description="Bounty UUID matching upload-fixture + replay URL paths.",
+    )
 
 
 @app.post(
@@ -150,10 +183,18 @@ async def verify_fixture(
     forwards it as ``verified``.
     """
 
+    bid: str | None = (req.bounty_id or "").strip() or None
+    if bid is not None and not BOUNTY_ID_RE.match(bid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bounty_id must be a valid UUID when provided.",
+        )
+
     background_tasks.add_task(
         run_fixture_verification,
         req.cleanup_id,
         settings=settings,
+        bounty_id=bid,
     )
     return VerifyAccepted(cleanup_id=req.cleanup_id)
 
@@ -203,6 +244,7 @@ _VALID_FIXTURE_KINDS = {"submission", "request"}
 async def upload_fixture(
     file: UploadFile = File(...),
     kind: str = Form("submission"),
+    bounty_id: str | None = Form(None),
 ) -> FixtureUploadResponse:
     """Replace one of the fixtures used by ``/verify-fixture``.
 
@@ -216,6 +258,10 @@ async def upload_fixture(
       Overwriting it bumps the file's mtime, which invalidates the in-process
       ``GroundTruthSpec`` cache so the next verification re-extracts the
       spec from the new video.
+
+    When ``bounty_id`` (a bounty UUID) is set, files are written as
+    ``egRequest_{bounty_id}.<ext>`` or ``egUserPost_{bounty_id}.<ext>`` in the
+    fixtures directory. If omitted, legacy single default filenames are used.
     """
 
     kind = (kind or "submission").strip().lower()
@@ -236,8 +282,21 @@ async def upload_fixture(
         )
 
     request_path, submission_path = fixture_paths()
-    target_path = Path(request_path if kind == "request" else submission_path)
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    root = request_path.parent
+    root.mkdir(parents=True, exist_ok=True)
+
+    bid = (bounty_id or "").strip() or None
+    if bid is not None:
+        if not BOUNTY_ID_RE.match(bid):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="bounty_id must be a valid UUID when provided.",
+            )
+        ext = _upload_suffix(file.filename, content_type)
+        stem = f"egRequest_{bid}" if kind == "request" else f"egUserPost_{bid}"
+        target_path = root / f"{stem}{ext}"
+    else:
+        target_path = Path(request_path if kind == "request" else submission_path)
 
     bytes_written = 0
     tmp_path = target_path.with_suffix(target_path.suffix + ".part")

@@ -18,6 +18,8 @@ export const bountyRouter = Router();
 
 const createBountySchema = z
   .object({
+    /** Optional client-generated UUID (v4) so the poster can upload fixture files to namespaced paths before the row is created. */
+    id: z.string().uuid().optional(),
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
     reward_sol: z.number().positive().optional(),
@@ -135,7 +137,8 @@ bountyRouter.post('/', async (req, res) => {
       description: parsed.data.description,
       reference_video_url: parsed.data.reference_video_url ?? null,
       status: 'open',
-      escrow_tx_sig: escrowTxSig
+      escrow_tx_sig: escrowTxSig,
+      ...(parsed.data.id ? { id: parsed.data.id } : {})
     })
     .select('*')
     .single();

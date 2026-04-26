@@ -114,16 +114,18 @@ export default function PostBountyPage() {
 
     setSubmitting(true);
     try {
+      const newBountyId = crypto.randomUUID();
       // Upload the recorded reference clip to the AI service first so Stage 1
       // has the right ground truth for any future verification of this bounty.
       // We block on it: posting the bounty without a synced reference would
       // leave Stage 1 reading a stale fixture from a previous session.
-      await uploadFixtureVideo(referenceBlob, "request");
+      // Files are ``egRequest_{bountyId}.*``; the same id is used when creating the row.
+      await uploadFixtureVideo(referenceBlob, "request", newBountyId);
 
-      // Persist a replay URL for claimers: AI service ``GET /request-fixture`` (after upload above).
-      const reference_video_url = getReferenceFixtureStreamUrl();
+      const reference_video_url = getReferenceFixtureStreamUrl(newBountyId);
 
       const common = {
+        id: newBountyId,
         title: title.trim(),
         description: description.trim(),
         lat: pinPos.lat,

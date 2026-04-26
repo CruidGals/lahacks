@@ -295,6 +295,8 @@ export async function getBounty(id: string): Promise<Bounty | null> {
 }
 
 export type PostBountyInput = {
+  /** Client-generated UUID so reference uploads and DB row use the same id. */
+  id?: string;
   title: string;
   description: string;
   lat: number;
@@ -347,6 +349,9 @@ export async function postBounty(
     description,
     reference_video_url: input.reference_video_url ?? null,
   };
+  if (input.id) {
+    body.id = input.id;
+  }
   if (input.reward_type === "sol") {
     body.reward_sol = input.reward_sol;
   } else {
@@ -485,10 +490,19 @@ export function getAiFixtureServiceBaseUrl(): string | null {
   return raw.replace(/\/+$/, "");
 }
 
-/** Public URL for the poster ``request`` fixture stream (``GET /request-fixture`` on the AI service). */
-export function getReferenceFixtureStreamUrl(): string | null {
+/**
+ * Public URL for the poster reference clip: ``GET /request-fixture/{bountyId}`` on
+ * the AI service (files ``egRequest_{bountyId}.*``).
+ */
+export function getReferenceFixtureStreamUrl(
+  bountyId: string | null | undefined
+): string | null {
+  const id = (bountyId || "").trim();
+  if (!id) return null;
   const base = getAiFixtureServiceBaseUrl();
-  return base ? `${base}/request-fixture` : null;
+  return base
+    ? `${base}/request-fixture/${encodeURIComponent(id)}`
+    : null;
 }
 
 export type VerificationProgress = {
@@ -547,10 +561,14 @@ export function isUseDemoVideo(): boolean {
  * `kind="request"` overwrites the poster "before" fixture used by Stage 1.
  * Replacing it invalidates the in-process GroundTruthSpec cache, so the next
  * verification re-derives the ground truth from the new reference video.
+ *
+ * When ``bountyId`` is set, the AI service writes ``egRequest_{bountyId}`` /
+ * ``egUserPost_{bountyId}`` so verification and replay stay per-bounty.
  */
 export async function uploadFixtureVideo(
   blob: Blob,
-  kind: FixtureKind = "submission"
+  kind: FixtureKind = "submission",
+  bountyId?: string | null
 ): Promise<{
   kind: FixtureKind;
   saved_path: string;
@@ -597,6 +615,10 @@ export async function uploadFixtureVideo(
   const formData = new FormData();
   formData.append("file", blob, filename);
   formData.append("kind", kind);
+  const bid = (bountyId || "").trim();
+  if (bid) {
+    formData.append("bounty_id", bid);
+  }
 
   const res = await fetch(url, {
     method: "POST",

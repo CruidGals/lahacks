@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -58,11 +59,51 @@ _spec_cache: dict[_SpecCacheKey, GroundTruthSpec] = {}
 _spec_lock = asyncio.Lock()
 
 
+BOUNTY_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def fixtures_data_dir() -> Path:
+    """Directory containing uploaded fixture files (``egRequest*``, ``egUserPost*``)."""
+
+    return _DEFAULT_REQUEST_VIDEO.parent
+
+
+def _first_glob_file(root: Path, pattern: str) -> Path | None:
+    """Return the only matching file, or the newest mtime if several exist."""
+
+    matches = sorted(root.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not matches:
+        return None
+    return matches[0]
+
+
+def request_fixture_file_for_bounty(bounty_id: str) -> Path | None:
+    """``egRequest_{bounty_id}.*`` for replay URLs, or ``None`` if missing / bad id."""
+
+    if not BOUNTY_ID_RE.match(bounty_id.strip()):
+        return None
+    return _first_glob_file(fixtures_data_dir(), f"egRequest_{bounty_id.strip()}.*")
+
+
+def fixture_paths_for_bounty(bounty_id: str) -> tuple[Path, Path] | None:
+    """Resolve ``egRequest_{bounty_id}.*`` and ``egUserPost_{bounty_id}.*`` if both exist."""
+
+    if not BOUNTY_ID_RE.match(bounty_id.strip()):
+        return None
+    bid = bounty_id.strip()
+    root = fixtures_data_dir()
+    req = _first_glob_file(root, f"egRequest_{bid}.*")
+    sub = _first_glob_file(root, f"egUserPost_{bid}.*")
+    if req is None or sub is None:
+        return None
+    return (req, sub)
+
+
 def fixture_paths(
     request_video: Optional[Path] = None,
     submission_video: Optional[Path] = None,
 ) -> tuple[Path, Path]:
-    """Resolve the request + submission fixture paths."""
+    """Resolve the request + submission fixture paths (legacy single-file mode)."""
 
     return (
         request_video or _DEFAULT_REQUEST_VIDEO,
@@ -212,6 +253,7 @@ async def run_fixture_verification(
     settings: Optional[Settings] = None,
     request_video: Optional[Path] = None,
     submission_video: Optional[Path] = None,
+    bounty_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run Stage 1+2 on the configured fixture videos and post the verdict.
 
@@ -222,7 +264,38 @@ async def run_fixture_verification(
     """
 
     settings = settings or get_settings()
-    req_video, sub_video = fixture_paths(request_video, submission_video)
+    if request_video is not None or submission_video is not None:
+        req_video, sub_video = fixture_paths(request_video, submission_video)
+    else:
+        bid = (bounty_id or "").strip()
+        if bid and BOUNTY_ID_RE.match(bid):
+            pair = fixture_paths_for_bounty(bid)
+            if pair is not None:
+                req_video, sub_video = pair
+            else:
+                err = (
+                    f"Missing bounty-scoped fixtures under {fixtures_data_dir()}: "
+                    f"expected egRequest_{bid}.* and egUserPost_{bid}.*"
+                )
+                logger.error("%s", err)
+                await set_verification_progress(
+                    cleanup_id,
+                    phase="error",
+                    percent=100,
+                    detail=err,
+                )
+                payload = _build_callback_payload(
+                    approved=False,
+                    score=0.0,
+                    reason=err,
+                    matched=0,
+                    required=0,
+                    missing_labels=[],
+                )
+                await _post_callback(cleanup_id, payload, settings)
+                return payload
+        else:
+            req_video, sub_video = fixture_paths(None, None)
 
     logger.info(
         "fixture_verification_start cleanup_id=%s request=%s submission=%s",

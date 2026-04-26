@@ -23,13 +23,12 @@ const verificationResultSchema = z.object({
   reasoning: z.string().optional()
 });
 
-// We intentionally only forward ``cleanup_id`` to the AI service. The Stage 2
-// fixture pipeline ignores the recorded video and GPS trajectory entirely --
-// it runs the hardcoded reference + submission fixtures and reports the
-// boolean ``Stage2FinalVerdict.approved`` back to
-// ``/api/cleanups/:id/verification-result``.
+// The AI fixture pipeline loads on-disk reference + submission clips. When
+// ``bounty_id`` is set, it uses ``egRequest_{bountyId}`` / ``egUserPost_{bountyId}``
+// (uploaded via the client); otherwise it falls back to legacy single files.
 type VerificationPayload = {
   cleanup_id: string;
+  bounty_id: string;
 };
 
 function isVerificationBypassEnabled(): boolean {
@@ -183,7 +182,8 @@ cleanupRouter.post('/', async (req, res) => {
   // reference/submission videos and posts the boolean verdict back to
   // /api/cleanups/:id/verification-result.
   const payload: VerificationPayload = {
-    cleanup_id: cleanup.id
+    cleanup_id: cleanup.id,
+    bounty_id: bounty.id
   };
 
   void postToAiVerifier(payload).catch((error) => {

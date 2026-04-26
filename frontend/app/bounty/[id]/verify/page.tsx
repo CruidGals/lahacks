@@ -48,7 +48,7 @@ export default function VerifyPage({
       // verification immediately, and the verifier reads the fixture file
       // from disk. Letting the cleanup POST race ahead can pin the verdict
       // to a stale clip from a previous session.
-      await uploadFixtureVideo(blob);
+      await uploadFixtureVideo(blob, "submission", bounty.id);
 
       const { cleanup_id } = await submitCleanup({
         session_id: session.id,
