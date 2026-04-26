@@ -9,6 +9,8 @@ from app.models import VerificationResult
 def _result() -> VerificationResult:
     return VerificationResult(
         verified=True,
+        final_result="Task has been successfully completed and artifact was removed.",
+        artifact_removed=True,
         confidence=0.9,
         scene_match=True,
         task_complete=True,

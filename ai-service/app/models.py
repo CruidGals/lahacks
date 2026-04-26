@@ -53,6 +53,7 @@ class TaskCompleteResult(BaseModel):
     """Person 3A's task-complete output."""
 
     task_complete: bool
+    artifact_removed: bool
     items: list[TaskCompleteItem] = Field(default_factory=list)
     confidence: float = Field(..., ge=0.0, le=1.0)
 
@@ -61,6 +62,8 @@ class VerificationResult(BaseModel):
     """Final payload posted back to the backend webhook."""
 
     verified: bool
+    final_result: str
+    artifact_removed: bool
     confidence: float = Field(..., ge=0.0, le=1.0)
     scene_match: bool
     task_complete: bool
