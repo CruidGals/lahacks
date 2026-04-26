@@ -125,8 +125,15 @@ body {
   border-radius: 6px !important;
 }
 
-/* Custom map pin */
+/* Custom map pin
+   The visible pin = circle (sized by the inline width/height) + a
+   triangular tail centered below it that protrudes BOUNTY_PIN_TAIL_PX
+   pixels below the icon wrapper's bottom edge. The tail TIP is the
+   geographic anchor. Keep TAIL_PROTRUSION_PX in BountyMap.tsx in sync
+   with the math below — if it doesn't match, the pin will drift. */
 .bounty-pin {
+  position: relative;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   border-radius: 9999px;
@@ -137,18 +144,23 @@ body {
   color: #fff;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
-  transform: translate(-50%, -100%);
 }
+/* With box-sizing: border-box and a 2px border, the padding-box bottom is
+   2px above the border-box bottom (= the visible circle bottom). Setting
+   bottom: -8px and height: 8px makes the triangle's bottom edge land
+   exactly 6px below the visible circle (= 8px below padding-box bottom).
+   The clip-path puts the tip at the bottom-center of that 8px box, so the
+   tip is exactly 6px below the wrapper. */
 .bounty-pin::after {
   content: "";
   position: absolute;
-  bottom: -6px;
   left: 50%;
-  transform: translateX(-50%) rotate(45deg);
-  width: 10px;
-  height: 10px;
+  bottom: -8px;
+  width: 12px;
+  height: 8px;
+  margin-left: -6px;
   background: inherit;
-  border-bottom-right-radius: 2px;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
 /* Animations */
