@@ -28,7 +28,12 @@ import {
   statusLabel,
   statusTone,
 } from "../../../lib/format";
-import { claimBounty, getBounty, getCurrentUserId } from "../../../lib/api";
+import {
+  cancelClaim,
+  claimBounty,
+  getBounty,
+  getCurrentUserId,
+} from "../../../lib/api";
 import type { Bounty } from "../../../lib/types";
 import { useGeolocation } from "../../../lib/useGeolocation";
 import { useToast } from "../../_components/Toast";
@@ -47,6 +52,7 @@ export default function BountyDetailPage({
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [hasActiveSession, setHasActiveSession] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     getBounty(id).then(setBounty);
@@ -79,6 +85,31 @@ export default function BountyDetailPage({
       });
     } finally {
       setClaiming(false);
+    }
+  };
+
+  const onCancelClaim = async () => {
+    if (!bounty) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            "Cancel this claim? The bounty will be available for others to claim again."
+          );
+    if (!confirmed) return;
+    setCancelling(true);
+    try {
+      const updated = await cancelClaim(bounty.id);
+      setBounty(updated);
+      setHasActiveSession(false);
+      toast("Claim cancelled", { variant: "info" });
+    } catch (e: unknown) {
+      toast("Couldn't cancel claim", {
+        variant: "error",
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -253,14 +284,25 @@ export default function BountyDetailPage({
             )}
             {bounty.status === "claimed" &&
               bounty.claimed_by === currentUserId && (
-                <Button
-                  fullWidth
-                  size="xl"
-                  iconRight={<ArrowRightIcon width={18} height={18} />}
-                  onClick={() => router.push(`/bounty/${bounty.id}/start`)}
-                >
-                  {hasActiveSession ? "Resume task" : "Start task"}
-                </Button>
+                <div className="grid gap-2">
+                  <Button
+                    fullWidth
+                    size="xl"
+                    iconRight={<ArrowRightIcon width={18} height={18} />}
+                    onClick={() => router.push(`/bounty/${bounty.id}/start`)}
+                  >
+                    {hasActiveSession ? "Resume task" : "Start task"}
+                  </Button>
+                  <Button
+                    fullWidth
+                    size="md"
+                    variant="outline"
+                    loading={cancelling}
+                    onClick={onCancelClaim}
+                  >
+                    Cancel claim
+                  </Button>
+                </div>
               )}
             {bounty.status === "claimed" &&
               currentUserId !== null &&

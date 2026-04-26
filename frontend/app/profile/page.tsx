@@ -1,31 +1,107 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  IDKitRequestWidget,
+  orbLegacy,
+  type IDKitResult,
+  type RpContext,
+} from "@worldcoin/idkit";
 import { Card } from "../_components/Card";
 import { Badge } from "../_components/Badge";
 import { Skeleton } from "../_components/Skeleton";
 import { ButtonLink, Button } from "../_components/Button";
 import {
+  ArrowRightIcon,
   CheckIcon,
+  ClockIcon,
   CoinIcon,
   FireIcon,
   LeafIcon,
+  LocationIcon,
   ShieldCheckIcon,
   SparkleIcon,
 } from "../_components/icons";
-import { getMe, resetState } from "../../lib/api";
+import {
+  cancelClaim,
+  createWorldIdRpContext,
+  getMe,
+  getMyClaimedBounties,
+  resetState,
+  verifyWorldIdWithProof,
+  type ClaimedBounty,
+} from "../../lib/api";
 import type { User } from "../../lib/types";
-import { formatRelative, formatUsd } from "../../lib/format";
+import { formatRelative, formatTimeLeft, formatUsd } from "../../lib/format";
 import { useToast } from "../_components/Toast";
 
 export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [worldAppId, setWorldAppId] = useState<`app_${string}` | null>(null);
+  const [worldAction, setWorldAction] = useState<string | null>(null);
+  const [worldEnvironment, setWorldEnvironment] = useState<"production" | "staging">(
+    "staging"
+  );
+  const [rpContext, setRpContext] = useState<RpContext | null>(null);
+  const [claimed, setClaimed] = useState<ClaimedBounty[] | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
     getMe().then(setUser);
   }, [reloadTick]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setClaimed(null);
+    getMyClaimedBounties()
+      .then((items) => {
+        if (!cancelled) setClaimed(items);
+      })
+      .catch(() => {
+        if (!cancelled) setClaimed([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadTick]);
+
+  const onCancelClaim = async (id: string) => {
+    if (cancellingId) return;
+    setCancellingId(id);
+    try {
+      await cancelClaim(id);
+      setClaimed((prev) => (prev ? prev.filter((b) => b.id !== id) : prev));
+      toast("Claim cancelled", { variant: "info" });
+    } catch (e: unknown) {
+      toast("Couldn't cancel claim", {
+        variant: "error",
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const startWorldVerification = async () => {
+    if (verifyLoading) return;
+    setVerifyLoading(true);
+    try {
+      const world = await createWorldIdRpContext("verify-profile-world-id-v1");
+      setWorldAppId(world.app_id);
+      setWorldAction(world.action);
+      setWorldEnvironment(world.environment);
+      setRpContext(world.rp_context);
+      setVerifyOpen(true);
+    } catch {
+      toast("Unable to start World ID verification", { variant: "error" });
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col">
@@ -122,12 +198,88 @@ export default function ProfilePage() {
                 Required to claim bounties. Takes 10 seconds.
               </p>
             </div>
-            <ButtonLink href="/onboarding" size="sm">
+            <Button size="sm" loading={verifyLoading} onClick={startWorldVerification}>
               Verify
-            </ButtonLink>
+            </Button>
           </Card>
         </div>
       )}
+
+      {rpContext && worldAppId && worldAction && (
+        <IDKitRequestWidget
+          open={verifyOpen}
+          onOpenChange={setVerifyOpen}
+          app_id={worldAppId}
+          action={worldAction}
+          rp_context={rpContext}
+          allow_legacy_proofs
+          environment={worldEnvironment}
+          preset={orbLegacy({ signal: user?.id ?? "anonymous" })}
+          handleVerify={async (result: IDKitResult) => {
+            await verifyWorldIdWithProof({
+              rp_id: rpContext.rp_id,
+              idkit_response: result as unknown as Record<string, unknown>,
+            });
+          }}
+          onSuccess={() => {
+            setVerifyOpen(false);
+            setReloadTick((tick) => tick + 1);
+            toast("Verified as a unique human", { variant: "success" });
+          }}
+          onError={() => {
+            toast("World ID verification failed. Please try again.", {
+              variant: "error",
+            });
+          }}
+        />
+      )}
+
+      {/* Active claims */}
+      <div className="px-4 mt-5">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold tracking-tight">Active claims</h2>
+          {claimed && (
+            <span className="text-[11px] text-[color:var(--color-muted)] tabular">
+              {claimed.length}{" "}
+              {claimed.length === 1 ? "bounty" : "bounties"}
+            </span>
+          )}
+        </div>
+        {claimed === null && (
+          <div className="grid gap-2">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        )}
+        {claimed && claimed.length === 0 && (
+          <Card className="p-5 grid place-items-center text-center">
+            <span className="grid place-items-center w-11 h-11 rounded-full bg-[color:var(--color-surface)] text-[color:var(--color-muted)]">
+              <LeafIcon width={18} height={18} />
+            </span>
+            <p className="text-sm font-semibold mt-2.5">No active claims</p>
+            <p className="text-xs text-[color:var(--color-muted)] mt-1 max-w-[260px]">
+              Claim a bounty from the map and it&rsquo;ll show up here so you can
+              continue or cancel it.
+            </p>
+            <ButtonLink href="/" size="sm" className="mt-3">
+              Browse map
+            </ButtonLink>
+          </Card>
+        )}
+        {claimed && claimed.length > 0 && (
+          <div className="grid gap-2">
+            {claimed.map((bounty) => (
+              <ClaimedBountyCard
+                key={bounty.id}
+                bounty={bounty}
+                cancelling={cancellingId === bounty.id}
+                disabled={cancellingId !== null && cancellingId !== bounty.id}
+                onCancel={() => onCancelClaim(bounty.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Recent activity */}
       <div className="px-4 mt-5">
@@ -229,6 +381,88 @@ function Stat({
         )}
       </p>
     </div>
+  );
+}
+
+function ClaimedBountyCard({
+  bounty,
+  cancelling,
+  disabled,
+  onCancel,
+}: {
+  bounty: ClaimedBounty;
+  cancelling: boolean;
+  disabled: boolean;
+  onCancel: () => void;
+}) {
+  const expiresIn = formatTimeLeft(bounty.claim_expires_at);
+  const continueHref = bounty.has_active_session
+    ? `/bounty/${bounty.id}/start`
+    : `/bounty/${bounty.id}`;
+  const continueLabel = bounty.has_active_session
+    ? "Resume task"
+    : "Continue";
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-start gap-3">
+        <span
+          className="grid place-items-center w-10 h-10 rounded-full text-white text-sm font-semibold shrink-0"
+          style={{ background: bounty.poster.avatar_color }}
+        >
+          {bounty.title[0]?.toUpperCase() ?? "B"}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Badge tone="amber" size="sm">
+              Claimed
+            </Badge>
+            {bounty.has_active_session && (
+              <Badge tone="blue" size="sm">
+                In progress
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm font-semibold mt-1.5 leading-snug truncate">
+            {bounty.title}
+          </p>
+          <p className="text-[11px] text-[color:var(--color-muted)] flex items-center gap-1 mt-0.5">
+            <LocationIcon width={11} height={11} />
+            <span className="truncate">{bounty.address}</span>
+          </p>
+          <div className="flex items-center gap-3 mt-2 text-[11px] tabular text-[color:var(--color-muted)]">
+            <span className="inline-flex items-center gap-1">
+              <CoinIcon width={11} height={11} />
+              <span className="font-semibold text-[color:var(--color-brand-600)]">
+                {bounty.reward_sol.toFixed(2)} SOL
+              </span>
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <ClockIcon width={11} height={11} />
+              {expiresIn}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mt-3">
+        <Button
+          variant="outline"
+          size="sm"
+          loading={cancelling}
+          disabled={disabled}
+          onClick={onCancel}
+        >
+          Cancel claim
+        </Button>
+        <ButtonLink
+          href={continueHref}
+          size="sm"
+          iconRight={<ArrowRightIcon width={14} height={14} />}
+        >
+          {continueLabel}
+        </ButtonLink>
+      </div>
+    </Card>
   );
 }
 

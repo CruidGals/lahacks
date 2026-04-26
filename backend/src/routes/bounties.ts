@@ -147,6 +147,47 @@ bountyRouter.get('/', async (req, res) => {
   });
 });
 
+bountyRouter.get('/me/claimed', async (req, res) => {
+  const user = await requireAuthUser(req, res);
+  if (!user) return;
+
+  if (!supabase) {
+    res.status(500).json({ error: 'Supabase is not configured.' });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('bounties')
+    .select(
+      '*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)'
+    )
+    .eq('claimer_id', user.id)
+    .eq('status', 'claimed')
+    .order('claimed_at', { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to load claimed bounties.' });
+    return;
+  }
+
+  const items =
+    data
+      ?.filter((bounty) => !isClaimExpired(bounty.claimed_at))
+      .map((bounty) => ({
+        ...bounty,
+        reward_sol: rewardLamportsToSol(bounty.reward_lamports),
+        urgency_score: computeUrgencyScore(bounty),
+        claim_expires_at: bounty.claimed_at
+          ? computeClaimExpiry(bounty.claimed_at)
+          : null
+      })) ?? [];
+
+  res.json({
+    as_of: new Date().toISOString(),
+    items
+  });
+});
+
 bountyRouter.get('/:id', async (req, res) => {
   if (!supabase) {
     res.status(500).json({ error: 'Supabase is not configured.' });
@@ -244,6 +285,93 @@ bountyRouter.post('/:id/claim', async (req, res) => {
   res.json({
     message: 'Bounty claimed successfully.',
     claim_expires_at: computeClaimExpiry(claimedAt),
+    bounty: {
+      ...updated,
+      reward_sol: rewardLamportsToSol(updated.reward_lamports),
+      urgency_score: computeUrgencyScore(updated)
+    }
+  });
+});
+
+bountyRouter.post('/:id/unclaim', async (req, res) => {
+  const user = await requireAuthUser(req, res);
+  if (!user) return;
+
+  if (!supabase) {
+    res.status(500).json({ error: 'Supabase is not configured.' });
+    return;
+  }
+
+  const { data: bounty, error } = await supabase
+    .from('bounties')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle();
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to load bounty.' });
+    return;
+  }
+  if (!bounty) {
+    res.status(404).json({ error: 'Bounty not found.' });
+    return;
+  }
+
+  if (bounty.claimer_id !== user.id) {
+    res.status(403).json({
+      error: 'Only the user who claimed this bounty can cancel the claim.'
+    });
+    return;
+  }
+
+  if (bounty.status === 'completed') {
+    res.status(409).json({
+      error: 'Bounty is already completed and cannot be unclaimed.'
+    });
+    return;
+  }
+
+  if (bounty.status !== 'claimed') {
+    res
+      .status(409)
+      .json({ error: 'Bounty is not currently in a claimed state.' });
+    return;
+  }
+
+  // Close any active sessions the user has on this bounty so a new
+  // claimer can't piggyback on a stale session record.
+  const { error: sessionError } = await supabase
+    .from('sessions')
+    .update({ status: 'rejected' })
+    .eq('bounty_id', bounty.id)
+    .eq('user_id', user.id)
+    .eq('status', 'active');
+
+  if (sessionError) {
+    res.status(500).json({ error: 'Failed to close active session.' });
+    return;
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from('bounties')
+    .update({
+      status: 'open',
+      claimer_id: null,
+      claimed_at: null
+    })
+    .eq('id', bounty.id)
+    .select(
+      '*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)'
+    )
+    .single();
+
+  if (updateError || !updated) {
+    res.status(500).json({ error: 'Failed to release bounty claim.' });
+    return;
+  }
+
+  res.json({
+    message: 'Claim cancelled. The bounty is open for others again.',
     bounty: {
       ...updated,
       reward_sol: rewardLamportsToSol(updated.reward_lamports),
