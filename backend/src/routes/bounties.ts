@@ -1,29 +1,41 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
+import { calculateXpReward } from '../lib/aiXp.js';
 import { requireAuthUser } from '../lib/auth.js';
 import {
+  MAX_XP_STAKE,
+  MIN_XP_STAKE,
   computeClaimExpiry,
   computeUrgencyScore,
+  describeReward,
   isClaimExpired,
-  rewardLamportsToSol,
   rewardSolToLamports
 } from '../lib/bounties.js';
 import { escrowBounty } from '../lib/solana.js';
 
 export const bountyRouter = Router();
 
-function bypassVerificationForTesting(): boolean {
-  return process.env.BYPASS_VERIFICATION_FOR_TESTING?.trim().toLowerCase() === 'true';
-}
-
-const createBountySchema = z.object({
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
-  reward_sol: z.number().positive(),
-  description: z.string().min(1).max(2000),
-  reference_video_url: z.url().optional().nullable()
-});
+const createBountySchema = z
+  .object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+    reward_sol: z.number().positive().optional(),
+    reward_xp: z.number().int().min(MIN_XP_STAKE).max(MAX_XP_STAKE).optional(),
+    title: z.string().min(1).max(120).optional(),
+    category: z.string().min(1).max(60).optional(),
+    description: z.string().min(1).max(2000),
+    reference_video_url: z.url().optional().nullable()
+  })
+  .refine(
+    (data) =>
+      (data.reward_sol !== undefined) !== (data.reward_xp !== undefined),
+    {
+      message:
+        'Exactly one of reward_sol or reward_xp must be provided.',
+      path: ['reward_sol']
+    }
+  );
 
 const bboxSchema = z.object({
   min_lat: z.coerce.number().min(-90).max(90).optional(),
@@ -52,26 +64,59 @@ bountyRouter.post('/', async (req, res) => {
     return;
   }
 
-  const rewardLamports = rewardSolToLamports(parsed.data.reward_sol);
-  let escrowTxSig: string;
-  try {
-    escrowTxSig = await escrowBounty({
-      posterId: user.id,
-      posterWallet: user.wallet_address,
-      rewardLamports
+  const isXpBounty = parsed.data.reward_xp !== undefined;
+
+  // Always run the AI XP pipeline -- for SOL bounties it gives us the bonus
+  // XP the claimer earns on top of the SOL payout; for XP bounties it gives
+  // us difficulty/importance for transparency (the actual xp_award is
+  // overridden to match the poster's stake so the system isn't gameable).
+  const xp = await calculateXpReward({
+    title: parsed.data.title ?? null,
+    description: parsed.data.description,
+    category: parsed.data.category ?? null,
+    reward_sol: parsed.data.reward_sol ?? null,
+    lat: parsed.data.lat,
+    lng: parsed.data.lng
+  });
+
+  const rewardLamports = isXpBounty
+    ? 0
+    : rewardSolToLamports(parsed.data.reward_sol as number);
+
+  let escrowTxSig: string | null = null;
+
+  if (isXpBounty) {
+    const stake = parsed.data.reward_xp as number;
+    const { error: stakeError } = await supabase.rpc('stake_xp', {
+      p_user_id: user.id,
+      p_amount: stake
     });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Failed to escrow bounty funds.';
-    const lowered = message.toLowerCase();
-    const isFundingConfigIssue =
-      lowered.includes('insufficient balance') ||
-      lowered.includes('poster wallet is required') ||
-      lowered.includes('requires a client-signed escrow transfer') ||
-      lowered.includes('missing required env var');
-    res.status(isFundingConfigIssue ? 400 : 500).json({ error: message });
-    return;
+
+    if (stakeError) {
+      const message = stakeError.message ?? '';
+      if (message.includes('insufficient XP balance')) {
+        res.status(402).json({
+          error: 'Insufficient XP balance to stake this bounty.'
+        });
+      } else {
+        res.status(500).json({ error: 'Failed to stake XP.' });
+      }
+      return;
+    }
+  } else {
+    try {
+      escrowTxSig = await escrowBounty({
+        posterId: user.id,
+        rewardLamports
+      });
+    } catch (err) {
+      console.error('SOL escrow failed:', err);
+      res.status(500).json({ error: 'Failed to escrow SOL bounty.' });
+      return;
+    }
   }
+
+  const xpAward = isXpBounty ? (parsed.data.reward_xp as number) : xp.xp_award;
 
   const { data: created, error: insertError } = await supabase
     .from('bounties')
@@ -80,6 +125,13 @@ bountyRouter.post('/', async (req, res) => {
       lat: parsed.data.lat,
       lng: parsed.data.lng,
       reward_lamports: rewardLamports,
+      reward_type: isXpBounty ? 'xp' : 'sol',
+      reward_xp: isXpBounty ? (parsed.data.reward_xp as number) : null,
+      xp_award: xpAward,
+      difficulty_score: xp.difficulty_score,
+      importance_score: xp.importance_score,
+      xp_reasoning: xp.reasoning,
+      title: parsed.data.title ?? null,
       description: parsed.data.description,
       reference_video_url: parsed.data.reference_video_url ?? null,
       status: 'open',
@@ -89,17 +141,36 @@ bountyRouter.post('/', async (req, res) => {
     .single();
 
   if (insertError || !created) {
-    res.status(500).json({ error: 'Escrow succeeded but failed to create bounty record.' });
+    // If we already moved value (SOL escrow or XP stake), best-effort roll
+    // it back so the user doesn't lose anything to a transient DB blip.
+    if (isXpBounty) {
+      await supabase.rpc('refund_xp', {
+        p_user_id: user.id,
+        p_amount: parsed.data.reward_xp as number
+      });
+    }
+    res.status(500).json({
+      error: isXpBounty
+        ? 'Failed to create XP bounty record (stake refunded).'
+        : 'Escrow succeeded but failed to create bounty record.'
+    });
     return;
   }
 
   res.status(201).json({
     bounty: {
       ...created,
-      reward_sol: rewardLamportsToSol(created.reward_lamports),
+      ...describeReward(created),
       urgency_score: computeUrgencyScore(created)
     },
-    escrow_tx_sig: escrowTxSig
+    escrow_tx_sig: escrowTxSig,
+    xp_evaluation: {
+      xp_award: created.xp_award,
+      difficulty_score: xp.difficulty_score,
+      importance_score: xp.importance_score,
+      reasoning: xp.reasoning,
+      source: xp.source
+    }
   });
 });
 
@@ -148,15 +219,15 @@ bountyRouter.get('/', async (req, res) => {
     data?.map((bounty) => {
       const hasExpiredClaim =
         bounty.status === 'claimed' && isClaimExpired(bounty.claimed_at);
+      const adjusted = {
+        ...bounty,
+        status: hasExpiredClaim ? 'expired' : bounty.status
+      };
 
       return {
-        ...bounty,
-        status: hasExpiredClaim ? 'expired' : bounty.status,
-        reward_sol: rewardLamportsToSol(bounty.reward_lamports),
-        urgency_score: computeUrgencyScore({
-          ...bounty,
-          status: hasExpiredClaim ? 'expired' : bounty.status
-        })
+        ...adjusted,
+        ...describeReward(adjusted),
+        urgency_score: computeUrgencyScore(adjusted)
       };
     }) ?? [];
 
@@ -194,7 +265,7 @@ bountyRouter.get('/me/claimed', async (req, res) => {
       ?.filter((bounty) => !isClaimExpired(bounty.claimed_at))
       .map((bounty) => ({
         ...bounty,
-        reward_sol: rewardLamportsToSol(bounty.reward_lamports),
+        ...describeReward(bounty),
         urgency_score: computeUrgencyScore(bounty),
         claim_expires_at: bounty.claimed_at
           ? computeClaimExpiry(bounty.claimed_at)
@@ -234,12 +305,12 @@ bountyRouter.get('/:id', async (req, res) => {
     bounty.status === 'claimed' && isClaimExpired(bounty.claimed_at)
       ? 'expired'
       : bounty.status;
+  const adjusted = { ...bounty, status };
 
   res.json({
-    ...bounty,
-    status,
-    reward_sol: rewardLamportsToSol(bounty.reward_lamports),
-    urgency_score: computeUrgencyScore({ ...bounty, status })
+    ...adjusted,
+    ...describeReward(adjusted),
+    urgency_score: computeUrgencyScore(adjusted)
   });
 });
 
@@ -311,7 +382,7 @@ bountyRouter.post('/:id/claim', async (req, res) => {
     claim_expires_at: computeClaimExpiry(claimedAt),
     bounty: {
       ...updated,
-      reward_sol: rewardLamportsToSol(updated.reward_lamports),
+      ...describeReward(updated),
       urgency_score: computeUrgencyScore(updated)
     }
   });
@@ -398,7 +469,7 @@ bountyRouter.post('/:id/unclaim', async (req, res) => {
     message: 'Claim cancelled. The bounty is open for others again.',
     bounty: {
       ...updated,
-      reward_sol: rewardLamportsToSol(updated.reward_lamports),
+      ...describeReward(updated),
       urgency_score: computeUrgencyScore(updated)
     }
   });

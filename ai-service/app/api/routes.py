@@ -30,6 +30,7 @@ from app.pipelines.spec_pipeline import (
     build_ground_truth_spec,
     extract_spec_candidates,
 )
+from app.pipelines.xp_pipeline import XpReward, run_xp_pipeline
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 logger = logging.getLogger(__name__)
@@ -80,6 +81,21 @@ class SpecCandidatesRequest(BaseModel):
     """
 
     video_url: str
+
+
+class XpPipelineRequest(BaseModel):
+    """Body for ``POST /pipelines/xp``.
+
+    All fields besides ``description`` are optional but help the LLM ground
+    its difficulty/importance reasoning.
+    """
+
+    title: str = ""
+    description: str
+    category: str | None = None
+    reward_sol: float | None = None
+    lat: float | None = None
+    lng: float | None = None
 
 
 # --- Endpoints ------------------------------------------------------------ #
@@ -198,3 +214,29 @@ async def run_spec_confirm(
     """
 
     return build_ground_truth_spec(body)
+
+
+@router.post(
+    "/xp",
+    response_model=XpReward,
+    status_code=status.HTTP_200_OK,
+    summary="Estimate XP reward for a bounty from its title/description.",
+)
+async def run_xp(
+    body: XpPipelineRequest,
+    settings: Settings = Depends(get_settings),
+) -> XpReward:
+    try:
+        return await run_xp_pipeline(
+            title=body.title,
+            description=body.description,
+            category=body.category,
+            reward_sol=body.reward_sol,
+            lat=body.lat,
+            lng=body.lng,
+            settings=settings,
+        )
+    except LLMConfigError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LLMResponseError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

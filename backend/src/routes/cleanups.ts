@@ -392,21 +392,67 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       return;
     }
 
-    let payoutTxSig: string;
-    try {
-      payoutTxSig = await releaseBountyToClaimer({
-        bountyId: bounty.id,
-        recipientWallet: claimer.wallet_address,
-        cleanupId: cleanup.id,
-        rewardLamports: bounty.reward_lamports
-      });
-    } catch (e) {
-      console.warn(
-        'On-chain payout failed; using simulated payout signature for demo:',
-        e instanceof Error ? e.message : e
+    // SOL payout only happens for SOL bounties. XP bounties release
+    // exclusively through the XP path below.
+    let payoutTxSig: string | null = null;
+    if (bounty.reward_type === 'sol' && bounty.reward_lamports > 0) {
+      try {
+        payoutTxSig = await releaseBountyToClaimer({
+          bountyId: bounty.id,
+          recipientWallet: claimer.wallet_address,
+          cleanupId: cleanup.id,
+          rewardLamports: bounty.reward_lamports
+        });
+      } catch (e) {
+        console.warn(
+          'On-chain payout failed; using simulated payout signature for demo:',
+          e instanceof Error ? e.message : e
+        );
+        // Demo fallback: don't block the verification flow if the devnet
+        // vault is empty.
+        payoutTxSig = `simulated_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+      }
+
+      // Mirror the SOL win on the leaderboard so /api/leaderboard?timeframe=all
+      // can rank historic earners without re-summing the bounties table.
+      const { error: lamportsError } = await supabase.rpc(
+        'add_earned_lamports',
+        {
+          p_user_id: claimer.id,
+          p_lamports: bounty.reward_lamports
+        }
       );
-      // Demo fallback: don't block the verification flow if devnet vault is empty.
-      payoutTxSig = `simulated_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+      if (lamportsError) {
+        console.warn(
+          'Failed to update lifetime lamports counter for claimer:',
+          lamportsError.message
+        );
+      }
+    }
+
+    // Award XP for *both* reward types. SOL bounties earn the LLM-derived
+    // bonus stored in ``bounty.xp_award``; XP bounties pay out the staked
+    // amount, which was also written into ``bounty.xp_award`` at creation.
+    let claimerXpAfter: number | null = null;
+    if (bounty.xp_award > 0) {
+      const { data: balance, error: xpError } = await supabase.rpc(
+        'award_xp',
+        {
+          p_user_id: claimer.id,
+          p_amount: bounty.xp_award
+        }
+      );
+      if (xpError) {
+        // The cleanup is already verified at this point -- if XP grant
+        // fails we surface the error so it can be replayed manually rather
+        // than silently dropping reward.
+        console.error('Failed to award XP to claimer:', xpError.message);
+        res.status(500).json({
+          error: 'Verified cleanup but failed to grant XP reward.'
+        });
+        return;
+      }
+      claimerXpAfter = typeof balance === 'number' ? balance : null;
     }
 
     const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
@@ -440,7 +486,10 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     res.json({
       ok: true,
       verified: true,
-      payout_tx_sig: payoutTxSig
+      payout_tx_sig: payoutTxSig,
+      reward_type: bounty.reward_type,
+      xp_awarded: bounty.xp_award,
+      claimer_xp_after: claimerXpAfter
     });
     return;
   }
@@ -466,6 +515,72 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     });
     return;
   }
+
+  if (!bounty.poster_id) {
+    res.status(500).json({ error: 'Bounty has no poster for refund.' });
+    return;
+  }
+
+  const { data: poster, error: posterError } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', bounty.poster_id)
+    .maybeSingle();
+
+  if (posterError) {
+    res.status(500).json({ error: 'Failed to load poster for refund.' });
+    return;
+  }
+  if (!poster) {
+    res.status(404).json({ error: 'Poster user not found for refund.' });
+    return;
+  }
+
+  // Refund the staked currency back to the poster. SOL goes back via the
+  // on-chain escrow program; XP goes back via the ``refund_xp`` RPC which
+  // increments ``users.xp`` *without* touching ``users.total_earned_xp``
+  // (a refund must not inflate the leaderboard).
+  let refundTxSig: string | null = null;
+  let posterXpAfter: number | null = null;
+  let refundStatus = 'no_refund_needed';
+
+  if (bounty.reward_type === 'sol' && bounty.reward_lamports > 0) {
+    try {
+      refundTxSig = await refundEscrowToPoster({
+        bountyId: bounty.id,
+        posterWallet: poster.wallet_address,
+        cleanupId: cleanup.id,
+        rewardLamports: bounty.reward_lamports
+      });
+    } catch (e) {
+      console.warn(
+        'Refund transaction failed; using simulated refund signature for demo:',
+        e instanceof Error ? e.message : e
+      );
+      refundTxSig = `simulated_refund_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+    }
+    refundStatus = 'escrow_refunded_to_poster';
+  } else if (bounty.reward_type === 'xp' && (bounty.reward_xp ?? 0) > 0) {
+    const { data: balance, error: refundError } = await supabase.rpc(
+      'refund_xp',
+      {
+        p_user_id: poster.id,
+        p_amount: bounty.reward_xp as number
+      }
+    );
+    if (refundError) {
+      console.error('Failed to refund XP to poster:', refundError.message);
+      res.status(500).json({ error: 'Failed to refund XP stake.' });
+      return;
+    }
+    posterXpAfter = typeof balance === 'number' ? balance : null;
+    refundStatus = 'xp_refunded_to_poster';
+  }
+
+  const verificationWithRefund = {
+    ...verificationJson,
+    refund_tx_sig: refundTxSig
+  };
 
   const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
     supabase
@@ -501,6 +616,9 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
   res.json({
     ok: true,
     verified: false,
-    refund_status: 'escrow_retained'
+    refund_tx_sig: refundTxSig,
+    refund_status: refundStatus,
+    reward_type: bounty.reward_type,
+    poster_xp_after: posterXpAfter
   });
 });

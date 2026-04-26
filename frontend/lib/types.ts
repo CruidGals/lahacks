@@ -14,6 +14,8 @@ export type BountyCategory =
   | "beach"
   | "other";
 
+export type RewardType = "sol" | "xp";
+
 export type Bounty = {
   id: string;
   title: string;
@@ -21,7 +23,12 @@ export type Bounty = {
   lat: number;
   lng: number;
   address: string;
+  reward_type: RewardType;
   reward_sol: number;
+  reward_xp: number | null;
+  xp_award: number;
+  difficulty_score: number | null;
+  importance_score: number | null;
   reward_usd_estimate: number;
   status: BountyStatus;
   urgency_score: number; // 0..100
@@ -63,6 +70,8 @@ export type User = {
   avatar_color: string;
   world_id_verified: boolean;
   joined_at: string;
+  xp: number;
+  total_earned_xp: number;
   total_earned_sol: number;
   total_completed: number;
   current_streak: number;
@@ -70,7 +79,10 @@ export type User = {
   recent_completed: Array<{
     bounty_id: string;
     title: string;
+    reward_type: RewardType;
     reward_sol: number;
+    reward_xp: number | null;
+    xp_award: number;
     completed_at: string;
   }>;
 };
@@ -80,6 +92,7 @@ export type LeaderboardEntry = {
   user_id: string;
   handle: string;
   avatar_color: string;
+  total_xp: number;
   total_earned_sol: number;
   total_completed: number;
 };

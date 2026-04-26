@@ -33,7 +33,7 @@ import {
 } from "../../lib/api";
 import { ApiError } from "../../lib/http";
 import type { User } from "../../lib/types";
-import { formatRelative, formatTimeLeft, formatUsd } from "../../lib/format";
+import { formatRelative, formatTimeLeft, formatUsd, formatXp } from "../../lib/format";
 import { useToast } from "../_components/Toast";
 
 export default function ProfilePage() {
@@ -172,10 +172,9 @@ export default function ProfilePage() {
             value={user ? `${user.total_completed}` : "—"}
           />
           <Stat
-            icon={<CoinIcon width={14} height={14} />}
-            label="Earned"
-            value={user ? `${user.total_earned_sol.toFixed(2)}` : "—"}
-            unit="SOL"
+            icon={<FireIcon width={14} height={14} />}
+            label="XP earned"
+            value={user ? formatXp(user.total_earned_xp) : "—"}
           />
           <Stat
             icon={<FireIcon width={14} height={14} />}

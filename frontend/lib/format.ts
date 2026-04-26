@@ -2,6 +2,23 @@ export function formatSol(amount: number): string {
   return `${amount.toFixed(amount < 1 ? 2 : 2)} SOL`;
 }
 
+export function formatXp(amount: number): string {
+  if (!Number.isFinite(amount)) return "0 XP";
+  if (amount >= 10_000)
+    return `${(amount / 1000).toFixed(1).replace(/\.0$/, "")}k XP`;
+  return `${Math.round(amount).toLocaleString()} XP`;
+}
+
+export function formatReward(b: {
+  reward_type: "sol" | "xp";
+  reward_sol: number;
+  reward_xp: number | null;
+  xp_award: number;
+}): string {
+  if (b.reward_type === "xp") return formatXp(b.reward_xp ?? b.xp_award);
+  return formatSol(b.reward_sol);
+}
+
 export function formatUsd(amount: number): string {
   return `$${amount.toLocaleString(undefined, {
     maximumFractionDigits: 0,
