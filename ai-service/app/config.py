@@ -46,6 +46,21 @@ class Settings(BaseSettings):
     callback_max_retries: int = Field(default=3, ge=1, le=10)
     callback_initial_backoff_seconds: float = Field(default=1.0, ge=0.0)
 
+    vision_detector_backend: str = Field(
+        default="opencv",
+        description="Detector backend: `opencv` or `grounding_dino`.",
+    )
+    cleanup_target_query: str = Field(
+        default="bag, bottle, can, trash, litter, garbage",
+        description="Comma-separated categories used by Grounding DINO.",
+    )
+    grounding_dino_model: str = Field(
+        default="adirik/grounding-dino:efd10a8ddc57ea28773327e881ce95e20cc1d734c589f7dd01d2036921ed78aa",
+        description="Replicate model slug/version for Grounding DINO.",
+    )
+    grounding_dino_box_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
+    grounding_dino_text_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
+
     log_level: str = Field(default="INFO")
 
     openai_api_key: str | None = Field(

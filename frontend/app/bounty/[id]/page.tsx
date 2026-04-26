@@ -28,7 +28,7 @@ import {
   statusLabel,
   statusTone,
 } from "../../../lib/format";
-import { claimBounty, getBounty } from "../../../lib/api";
+import { claimBounty, getBounty, getCurrentUserId } from "../../../lib/api";
 import type { Bounty } from "../../../lib/types";
 import { useGeolocation } from "../../../lib/useGeolocation";
 import { useToast } from "../../_components/Toast";
@@ -44,6 +44,8 @@ export default function BountyDetailPage({
   const { toast } = useToast();
   const [bounty, setBounty] = useState<Bounty | null | undefined>(undefined);
   const [worldVerified, setWorldVerified] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [hasActiveSession, setHasActiveSession] = useState(false);
   const [claiming, setClaiming] = useState(false);
 
   useEffect(() => {
@@ -51,12 +53,16 @@ export default function BountyDetailPage({
   }, [id]);
 
   useEffect(() => {
+    getCurrentUserId().then(setCurrentUserId).catch(() => {});
     if (typeof window === "undefined") return;
     try {
-      const raw = window.localStorage.getItem("cleanr.state.v1");
-      if (raw) setWorldVerified(JSON.parse(raw)?.worldIdVerified ?? false);
+      const raw = window.localStorage.getItem("cleanr.user_cache.v1");
+      if (raw) setWorldVerified(Boolean(JSON.parse(raw)?.verified));
     } catch {}
-  }, []);
+    setHasActiveSession(
+      Boolean(window.localStorage.getItem(`cleanr.session.${id}`))
+    );
+  }, [id]);
 
   const onClaim = async () => {
     if (!bounty) return;
@@ -245,21 +251,24 @@ export default function BountyDetailPage({
                 )}
               </WorldIdGate>
             )}
-            {bounty.status === "claimed" && bounty.claimed_by === "user_me" && (
-              <Button
-                fullWidth
-                size="xl"
-                iconRight={<ArrowRightIcon width={18} height={18} />}
-                onClick={() => router.push(`/bounty/${bounty.id}/start`)}
-              >
-                Start task
-              </Button>
-            )}
-            {bounty.status === "claimed" && bounty.claimed_by !== "user_me" && (
-              <Button fullWidth size="xl" disabled>
-                Claimed by someone else
-              </Button>
-            )}
+            {bounty.status === "claimed" &&
+              bounty.claimed_by === currentUserId && (
+                <Button
+                  fullWidth
+                  size="xl"
+                  iconRight={<ArrowRightIcon width={18} height={18} />}
+                  onClick={() => router.push(`/bounty/${bounty.id}/start`)}
+                >
+                  {hasActiveSession ? "Resume task" : "Start task"}
+                </Button>
+              )}
+            {bounty.status === "claimed" &&
+              currentUserId !== null &&
+              bounty.claimed_by !== currentUserId && (
+                <Button fullWidth size="xl" disabled>
+                  Claimed by someone else
+                </Button>
+              )}
             {bounty.status === "in_progress" && (
               <Button
                 fullWidth

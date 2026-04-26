@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.config import Settings, get_settings
 from app.pipelines.annotator import annotate_frames
+from app.pipelines.dino_adapter import build_dino_output_from_video
 from app.pipelines.dino_types import DinoOutput
 from app.pipelines.frame_extractor import (
     ExtractedFrame,
@@ -205,20 +206,45 @@ async def run_cleanup_pipeline(
     *,
     reference_video: VideoSource,
     submission_video: VideoSource,
-    reference_dino: DinoOutput,
-    submission_dino: DinoOutput,
     reference_spec: ReferenceSpec,
+    reference_dino: DinoOutput | None = None,
+    submission_dino: DinoOutput | None = None,
     settings: Settings | None = None,
     client: OpenAIPipelineClient | None = None,
 ) -> CleanupVerdict:
-    """Run the Person B cleanup comparison pipeline."""
+    """Run the Person B cleanup comparison pipeline.
+
+    DINO outputs are optional: if missing, the adapter runs the configured
+    detector on each video. Pass them when you've already computed them
+    upstream and want to avoid the second pass.
+    """
 
     settings = settings or get_settings()
     client = client or OpenAIPipelineClient(settings)
 
-    if settings.pipeline_use_stub:
-        return _stub_verdict(reference_spec, submission_dino)
+    if not settings.pipeline_use_stub:
+        if reference_dino is None:
+            reference_dino = await build_dino_output_from_video(
+                reference_video, settings=settings
+            )
+        if submission_dino is None:
+            submission_dino = await build_dino_output_from_video(
+                submission_video, settings=settings
+            )
 
+    if settings.pipeline_use_stub:
+        # Stub mode is offline -- fall back to empty DINO so the heuristic still runs.
+        empty = DinoOutput(
+            video_url="<stub>",
+            duration_s=0.0,
+            width=1,
+            height=1,
+            frames=[],
+            summary={},
+        )
+        return _stub_verdict(reference_spec, submission_dino or empty)
+
+    assert reference_dino is not None and submission_dino is not None
     ref_frames_raw = await extract_frames(
         reference_video, frames_per_video=settings.pipeline_frames_per_video
     )

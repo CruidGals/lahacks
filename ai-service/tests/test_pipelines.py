@@ -22,6 +22,10 @@ from app.pipelines.cleanup_pipeline import (
     ItemResolution,
     run_cleanup_pipeline,
 )
+from app.pipelines.dino_adapter import (
+    _xyxy_to_bbox,
+    build_dino_output_from_video,
+)
 from app.pipelines.dino_types import (
     Bbox,
     Detection,

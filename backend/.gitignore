@@ -14,7 +14,6 @@ pnpm-debug.log*
 # Environment files
 .env
 .env.*
-!.env.example
 solana/
 
 # Editor and OS files

@@ -32,10 +32,14 @@ logger = logging.getLogger(__name__)
 
 
 class ReferencePipelineRequest(BaseModel):
-    """Body for ``POST /pipelines/reference``."""
+    """Body for ``POST /pipelines/reference``.
+
+    ``dino`` is optional -- when omitted the adapter runs the configured
+    object detector against ``video_url`` to produce one.
+    """
 
     video_url: str
-    dino: DinoOutput
+    dino: DinoOutput | None = None
 
 
 class CleanupPipelineRequest(BaseModel):
@@ -43,13 +47,14 @@ class CleanupPipelineRequest(BaseModel):
 
     The reference spec must come from a prior ``/pipelines/reference`` run --
     we don't recompute it here so the caller controls when it's regenerated.
+    Both DINO payloads are optional and auto-computed when missing.
     """
 
     reference_video_url: str
     submission_video_url: str
-    reference_dino: DinoOutput
-    submission_dino: DinoOutput
     reference_spec: ReferenceSpec
+    reference_dino: DinoOutput | None = None
+    submission_dino: DinoOutput | None = None
 
 
 class DisposalPipelineRequest(BaseModel):

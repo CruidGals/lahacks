@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import argparse
 from pathlib import Path
 
-from app.object_detection import annotate_video, most_common_labels, summarize_video_objects
+from app.object_detection import (
+    annotate_video,
+    most_common_labels,
+    summarize_video_objects,
+    summarize_video_objects_grounding_dino,
+)
 
 
 def main() -> None:
@@ -17,9 +23,26 @@ def main() -> None:
         default=Path("artifacts") / "annotated_preview.mp4",
         help="Output annotated video file path",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["opencv", "grounding_dino"],
+        default="opencv",
+        help="Detector backend to use for summaries",
+    )
+    parser.add_argument(
+        "--query",
+        type=str,
+        default="trash . litter . garbage . bottle . can . bag",
+        help="Grounding DINO dot-separated category query.",
+    )
     args = parser.parse_args()
 
-    summary = summarize_video_objects(args.video_path)
+    if args.backend == "grounding_dino":
+        summary = asyncio.run(
+            summarize_video_objects_grounding_dino(args.video_path, query=args.query)
+        )
+    else:
+        summary = summarize_video_objects(args.video_path)
     output = annotate_video(args.video_path, args.output)
 
     print(f"frames_sampled={summary.frames_sampled}")

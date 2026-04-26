@@ -12,7 +12,11 @@ import {
   ShieldCheckIcon,
   SparkleIcon,
 } from "../../../_components/icons";
-import { getBounty } from "../../../../lib/api";
+import {
+  buildVerificationResult,
+  getBounty,
+  getCleanup,
+} from "../../../../lib/api";
 import type { Bounty, VerificationResult } from "../../../../lib/types";
 import { useToast } from "../../../_components/Toast";
 
@@ -43,7 +47,7 @@ export default function SubmittedPage({
     getBounty(id).then(setBounty);
   }, [id]);
 
-  // Step animation
+  // Step animation while we wait on the verifier
   useEffect(() => {
     if (result) return;
     const t = window.setInterval(() => {
@@ -52,26 +56,41 @@ export default function SubmittedPage({
     return () => window.clearInterval(t);
   }, [result]);
 
-  // Poll localStorage for the verifier outcome
+  // Poll the backend for the cleanup status
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const t = window.setInterval(() => {
-      const raw = window.localStorage.getItem(`cleanr.result.${id}`);
-      if (raw) {
-        try {
-          setResult(JSON.parse(raw) as VerificationResult);
-        } catch {}
-        window.clearInterval(t);
+    const cleanupId = window.localStorage.getItem(`cleanr.cleanup.${id}`);
+    if (!cleanupId) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { raw } = await getCleanup(cleanupId);
+        if (cancelled) return;
+        const built = buildVerificationResult(raw);
+        if (built) {
+          setResult(built);
+          return;
+        }
+      } catch {
+        // keep polling — transient errors shouldn't kill the flow
       }
-    }, 250);
-    return () => window.clearInterval(t);
+      if (!cancelled) window.setTimeout(poll, 1500);
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   useEffect(() => {
-    if (result?.passed) {
-      toast(`+${bounty?.reward_sol.toFixed(2)} SOL paid out`, {
+    if (result?.passed && bounty) {
+      toast(`+${bounty.reward_sol.toFixed(2)} SOL paid out`, {
         variant: "success",
-        description: `Tx ${result.reward_tx_signature}`,
+        description: result.reward_tx_signature
+          ? `Tx ${result.reward_tx_signature.slice(0, 12)}…`
+          : undefined,
       });
     }
   }, [result, bounty, toast]);
@@ -92,7 +111,6 @@ export default function SubmittedPage({
           {result && !result.passed && <FailedState />}
         </Card>
 
-        {/* Checklist */}
         <div className="mt-4">
           <h3 className="text-sm font-semibold tracking-tight mb-2">
             Verification breakdown
@@ -196,7 +214,9 @@ function SuccessState({
         <CoinIcon width={14} height={14} className="text-[color:var(--color-brand-600)]" />
         <span className="text-[color:var(--color-muted)]">Tx</span>
         <code className="font-mono tabular text-[12px] px-2 py-0.5 rounded-[6px] bg-[color:var(--color-surface)] border border-[color:var(--color-border)]">
-          {result.reward_tx_signature ?? "—"}
+          {result.reward_tx_signature
+            ? `${result.reward_tx_signature.slice(0, 12)}…`
+            : "—"}
         </code>
       </div>
     </div>

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
 from app.pipelines.annotator import annotate_frames
+from app.pipelines.dino_adapter import build_dino_output_from_video
 from app.pipelines.dino_types import DinoOutput
 from app.pipelines.frame_extractor import (
     ExtractedFrame,
@@ -197,27 +198,41 @@ def _stub_spec(dino: DinoOutput, annotated_frames: list[ExtractedFrame]) -> Refe
 async def run_reference_pipeline(
     *,
     video: VideoSource,
-    dino: DinoOutput,
+    dino: DinoOutput | None = None,
     settings: Settings | None = None,
     client: OpenAIPipelineClient | None = None,
 ) -> ReferenceSpec:
     """Run the Person A pipeline end-to-end.
 
-    ``video`` may be a URL, local Path, or raw bytes. ``dino`` is the
-    structured detector output for the same video. The returned spec already
-    has ``annotated_frames_b64`` populated for the demo UI.
+    ``video`` may be a URL, local Path, or raw bytes. If ``dino`` is omitted
+    the adapter runs the configured detector (OpenCV or Grounding DINO) on
+    the same video to produce one. The returned spec already has
+    ``annotated_frames_b64`` populated for the demo UI.
     """
 
     settings = settings or get_settings()
     client = client or OpenAIPipelineClient(settings)
+
+    if dino is None and not settings.pipeline_use_stub:
+        dino = await build_dino_output_from_video(video, settings=settings)
 
     if settings.pipeline_use_stub:
         # Stub mode: skip OpenCV + LLM entirely so tests + offline dev are fast.
         annotated = make_placeholder_frames(
             settings.pipeline_frames_per_video, label="ref"
         )
+        if dino is None:
+            dino = DinoOutput(
+                video_url=str(video) if not isinstance(video, bytes) else "<bytes>",
+                duration_s=0.0,
+                width=1,
+                height=1,
+                frames=[],
+                summary={},
+            )
         return _stub_spec(dino, annotated)
 
+    assert dino is not None  # narrowed above
     raw_frames = await extract_frames(
         video, frames_per_video=settings.pipeline_frames_per_video
     )

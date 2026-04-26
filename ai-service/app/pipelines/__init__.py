@@ -17,6 +17,7 @@ in offline ``PIPELINE_USE_STUB=true`` mode is a single-flag change.
 """
 
 from app.pipelines.cleanup_pipeline import CleanupVerdict, ItemResolution, run_cleanup_pipeline
+from app.pipelines.dino_adapter import build_dino_output_from_video
 from app.pipelines.dino_types import Bbox, Detection, DinoOutput, FrameDetections
 from app.pipelines.disposal_pipeline import DisposalVerdict, run_disposal_pipeline
 from app.pipelines.reference_pipeline import ReferenceSpec, TrashItem, run_reference_pipeline
@@ -31,6 +32,7 @@ __all__ = [
     "ItemResolution",
     "ReferenceSpec",
     "TrashItem",
+    "build_dino_output_from_video",
     "run_cleanup_pipeline",
     "run_disposal_pipeline",
     "run_reference_pipeline",

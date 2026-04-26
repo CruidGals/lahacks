@@ -10,7 +10,6 @@ __pycache__/
 # env
 .env
 .env.*
-!.env.example
 
 # build artifacts
 dist/
@@ -18,7 +17,6 @@ build/
 coverage/
 artifacts/
 ai-service/models/
-ai-service/.env
 .pytest_cache/
 .mypy_cache/
 

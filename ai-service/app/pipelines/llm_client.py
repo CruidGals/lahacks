@@ -153,15 +153,39 @@ class OpenAIPipelineClient:
                 }
             )
 
-        response = await client.chat.completions.create(
+        # Newer OpenAI models (gpt-5.x, o1+, etc.) require ``max_completion_tokens``
+        # while older models (gpt-4o, gpt-4o-mini) still accept ``max_tokens``.
+        # We try the new param first and transparently fall back on the legacy
+        # error so the same code works across model versions.
+        common_kwargs = dict(
             model=self._settings.openai_model,
-            max_tokens=self._settings.openai_max_tokens,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": request.system_prompt},
                 {"role": "user", "content": content_parts},
             ],
         )
+        try:
+            response = await client.chat.completions.create(
+                max_completion_tokens=self._settings.openai_max_tokens,
+                **common_kwargs,
+            )
+        except TypeError:
+            # Older openai-python builds that don't know about the new kwarg.
+            response = await client.chat.completions.create(
+                max_tokens=self._settings.openai_max_tokens,
+                **common_kwargs,
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "max_completion_tokens" in message or "max_tokens" in message:
+                response = await client.chat.completions.create(
+                    max_tokens=self._settings.openai_max_tokens,
+                    **common_kwargs,
+                )
+            else:
+                raise
+
         if not response.choices:
             raise LLMResponseError("OpenAI returned no choices")
         message = response.choices[0].message
