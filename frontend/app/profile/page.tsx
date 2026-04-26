@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  IDKitRequestWidget,
+  orbLegacy,
+  type IDKitResult,
+  type RpContext,
+} from "@worldcoin/idkit";
 import { Card } from "../_components/Card";
 import { Badge } from "../_components/Badge";
 import { Skeleton } from "../_components/Skeleton";
@@ -13,7 +19,12 @@ import {
   ShieldCheckIcon,
   SparkleIcon,
 } from "../_components/icons";
-import { getMe, resetState } from "../../lib/api";
+import {
+  createWorldIdRpContext,
+  getMe,
+  resetState,
+  verifyWorldIdWithProof,
+} from "../../lib/api";
 import type { User } from "../../lib/types";
 import { formatRelative, formatUsd } from "../../lib/format";
 import { useToast } from "../_components/Toast";
@@ -21,11 +32,36 @@ import { useToast } from "../_components/Toast";
 export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [worldAppId, setWorldAppId] = useState<`app_${string}` | null>(null);
+  const [worldAction, setWorldAction] = useState<string | null>(null);
+  const [worldEnvironment, setWorldEnvironment] = useState<"production" | "staging">(
+    "staging"
+  );
+  const [rpContext, setRpContext] = useState<RpContext | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
     getMe().then(setUser);
   }, [reloadTick]);
+
+  const startWorldVerification = async () => {
+    if (verifyLoading) return;
+    setVerifyLoading(true);
+    try {
+      const world = await createWorldIdRpContext("verify-profile-world-id-v1");
+      setWorldAppId(world.app_id);
+      setWorldAction(world.action);
+      setWorldEnvironment(world.environment);
+      setRpContext(world.rp_context);
+      setVerifyOpen(true);
+    } catch {
+      toast("Unable to start World ID verification", { variant: "error" });
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col">
@@ -122,11 +158,40 @@ export default function ProfilePage() {
                 Required to claim bounties. Takes 10 seconds.
               </p>
             </div>
-            <ButtonLink href="/onboarding" size="sm">
+            <Button size="sm" loading={verifyLoading} onClick={startWorldVerification}>
               Verify
-            </ButtonLink>
+            </Button>
           </Card>
         </div>
+      )}
+
+      {rpContext && worldAppId && worldAction && (
+        <IDKitRequestWidget
+          open={verifyOpen}
+          onOpenChange={setVerifyOpen}
+          app_id={worldAppId}
+          action={worldAction}
+          rp_context={rpContext}
+          allow_legacy_proofs
+          environment={worldEnvironment}
+          preset={orbLegacy({ signal: user?.id ?? "anonymous" })}
+          handleVerify={async (result: IDKitResult) => {
+            await verifyWorldIdWithProof({
+              rp_id: rpContext.rp_id,
+              idkit_response: result as unknown as Record<string, unknown>,
+            });
+          }}
+          onSuccess={() => {
+            setVerifyOpen(false);
+            setReloadTick((tick) => tick + 1);
+            toast("Verified as a unique human", { variant: "success" });
+          }}
+          onError={() => {
+            toast("World ID verification failed. Please try again.", {
+              variant: "error",
+            });
+          }}
+        />
       )}
 
       {/* Recent activity */}
