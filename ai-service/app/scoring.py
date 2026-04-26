@@ -32,9 +32,16 @@ def decide(
     )
 
     reasoning = _build_reasoning(scene, task, fraud, confidence, verified, settings)
+    final_result = (
+        "Task has been successfully completed and artifact was removed."
+        if verified
+        else "Task verification failed or artifact is still present."
+    )
 
     return VerificationResult(
         verified=verified,
+        final_result=final_result,
+        artifact_removed=task.artifact_removed,
         confidence=round(confidence, 4),
         scene_match=scene.same_location,
         task_complete=task.task_complete,
