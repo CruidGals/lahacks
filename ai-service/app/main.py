@@ -16,6 +16,7 @@ from app.api.routes import router as pipelines_router
 from app.config import Settings, get_settings
 from app.models import VerifyAccepted, VerifyRequest
 from app.pipelines.fixture_verify import fixture_paths, run_fixture_verification
+from app.verification_progress import get_verification_progress
 from app.verify_pipeline import run_verification
 
 
@@ -121,6 +122,28 @@ async def verify_fixture(
         settings=settings,
     )
     return VerifyAccepted(cleanup_id=req.cleanup_id)
+
+
+class VerificationProgressResponse(BaseModel):
+    """Snapshot for ``GET /verify-progress/{cleanup_id}`` (in-process, mirrors pipeline logs)."""
+
+    cleanup_id: str
+    phase: str
+    percent: int
+    detail: str
+    updated_at: float | None = None
+
+
+@app.get(
+    "/verify-progress/{cleanup_id}",
+    response_model=VerificationProgressResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def verify_progress(cleanup_id: str) -> VerificationProgressResponse:
+    """Poll Stage 1+2 fixture job progress; ``detail`` strings align with uvicorn log lines."""
+
+    data = await get_verification_progress(cleanup_id.strip())
+    return VerificationProgressResponse(**data)
 
 
 _UPLOAD_MAX_BYTES = int(os.environ.get("FIXTURE_UPLOAD_MAX_BYTES", str(200 * 1024 * 1024)))

@@ -473,7 +473,63 @@ export async function getSession(id: string): Promise<Session | null> {
 
 // ---------- Cleanups ----------
 
+/**
+ * Base URL of the Python AI service (no trailing slash). Used for
+ * ``/upload-fixture`` and ``/verify-progress/:cleanup_id``. Set
+ * ``NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL`` to that origin, e.g.
+ * ``http://127.0.0.1:8001``.
+ */
+export function getAiFixtureServiceBaseUrl(): string | null {
+  const raw = process.env.NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL;
+  if (!raw?.trim()) return null;
+  return raw.replace(/\/+$/, "");
+}
+
+export type VerificationProgress = {
+  cleanup_id: string;
+  phase: string;
+  percent: number;
+  detail: string;
+  updated_at: number | null;
+};
+
+/**
+ * Poll live fixture-pipeline status from the AI service (same phases / copy as
+ * uvicorn logs: ``fixture_verification_start``, ``fixture_stage1_*``, etc.).
+ * Returns null if the base URL is not set or the request fails.
+ */
+export async function fetchVerificationProgress(
+  cleanupId: string
+): Promise<VerificationProgress | null> {
+  const base = getAiFixtureServiceBaseUrl();
+  if (!base) return null;
+  const url = `${base}/verify-progress/${encodeURIComponent(cleanupId)}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return (await res.json()) as VerificationProgress;
+  } catch {
+    return null;
+  }
+}
+
 export type FixtureKind = "submission" | "request";
+
+/**
+ * Set ``USE_DEMO_VIDEO=true`` in ``.env.local`` (exposed via ``next.config``)
+ * to skip real uploads. The AI service should use ``USE_DEMO_VIDEO=true`` so
+ * it reads ``data/videos/fixtures/sample``; when off, the verifier uses
+ * ``data/videos/fixtures/eg{Request,UserPost}.MOV`` (upload targets). Also
+ * supported: ``NEXT_PUBLIC_USE_DEMO_VIDEO`` without next.config.
+ */
+export function isUseDemoVideo(): boolean {
+  const v = String(
+    process.env.USE_DEMO_VIDEO ?? process.env.NEXT_PUBLIC_USE_DEMO_VIDEO ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
 
 /**
  * Upload a recorded clip to one of the AI service's fixture slots.
@@ -494,7 +550,21 @@ export async function uploadFixtureVideo(
   saved_path: string;
   bytes_written: number;
   content_type: string | null;
+  demo_mode?: boolean;
 }> {
+  if (isUseDemoVideo()) {
+    if (!blob || blob.size === 0) {
+      throw new Error("Recorded clip is empty.");
+    }
+    return {
+      kind,
+      saved_path: "data/videos/fixtures/sample (demo; upload skipped)",
+      bytes_written: 0,
+      content_type: null,
+      demo_mode: true,
+    };
+  }
+
   const baseRaw = process.env.NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL;
   if (!baseRaw) {
     throw new Error(

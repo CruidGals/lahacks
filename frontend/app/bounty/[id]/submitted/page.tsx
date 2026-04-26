@@ -14,22 +14,45 @@ import {
 } from "../../../_components/icons";
 import {
   buildVerificationResult,
+  fetchVerificationProgress,
+  getAiFixtureServiceBaseUrl,
   getBounty,
   getCleanup,
+  type VerificationProgress,
 } from "../../../../lib/api";
 import type { Bounty, VerificationResult } from "../../../../lib/types";
 import { useToast } from "../../../_components/Toast";
 
-const CHECK_LABELS = [
-  "Receiving submission…",
-  "Verifying GPS trajectory…",
-  "Cross-checking cell location…",
-  "Reading nonce watermark…",
-  "Comparing against reference video…",
-  "Detecting before/after change…",
-  "Cross-referencing Street View…",
-  "Releasing escrow on Solana…",
+/** Stages that mirror the AI fixture log tags when live progress is unavailable. */
+const FALLBACK_VERIFICATION: { percent: number; message: string }[] = [
+  { percent: 5, message: "fixture_verification_start — job queued for Stage 1+2 (set NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL for live status)." },
+  { percent: 12, message: "fixture_stage1 / cache: ground-truth spec from the reference video (DINO + IoU)." },
+  { percent: 32, message: "fixture_stage1_complete — spec ready; next log lines: stage2_start, stage2_tracked, stage2_validated." },
+  { percent: 48, message: "Stage 2: DINO + tracker on the submission clip (longest phase)." },
+  { percent: 68, message: "fixture_verification_complete — building verdict + callback payload." },
+  { percent: 82, message: "POST to backend (fixture_callback_delivered) with verified / confidence / reasoning." },
+  { percent: 92, message: "Waiting for the API to mark this cleanup and return the result to this screen…" },
 ];
+
+function deriveVerifyingDisplay(
+  live: VerificationProgress | null,
+  fallbackIdx: number
+): { percent: number; message: string; source: "live" | "fallback" } {
+  if (live) {
+    if (live.phase === "unknown" && live.percent === 0) {
+      return { percent: 2, message: live.detail, source: "live" };
+    }
+    if (live.phase !== "unknown" || live.percent > 0) {
+      return {
+        percent: Math.min(100, live.percent),
+        message: live.detail,
+        source: "live",
+      };
+    }
+  }
+  const row = FALLBACK_VERIFICATION[Math.min(fallbackIdx, FALLBACK_VERIFICATION.length - 1)];
+  return { percent: row.percent, message: row.message, source: "fallback" };
+}
 
 export default function SubmittedPage({
   params,
@@ -41,20 +64,50 @@ export default function SubmittedPage({
   const { toast } = useToast();
   const [bounty, setBounty] = useState<Bounty | null>(null);
   const [result, setResult] = useState<VerificationResult | null>(null);
-  const [stepIdx, setStepIdx] = useState(0);
+  const [verifierProgress, setVerifierProgress] = useState<VerificationProgress | null>(null);
+  const [fallbackIdx, setFallbackIdx] = useState(0);
+
+  const verifyUi = !result
+    ? deriveVerifyingDisplay(verifierProgress, fallbackIdx)
+    : null;
+  const aiBaseConfigured =
+    typeof window !== "undefined" && !!getAiFixtureServiceBaseUrl();
 
   useEffect(() => {
     getBounty(id).then(setBounty);
   }, [id]);
 
-  // Step animation while we wait on the verifier
+  // Coarse fallback ramp when the AI service is not reachable or returns no snapshot yet
   useEffect(() => {
     if (result) return;
     const t = window.setInterval(() => {
-      setStepIdx((i) => Math.min(i + 1, CHECK_LABELS.length - 1));
-    }, 450);
+      setFallbackIdx((i) => Math.min(i + 1, FALLBACK_VERIFICATION.length - 1));
+    }, 3200);
     return () => window.clearInterval(t);
   }, [result]);
+
+  useEffect(() => {
+    if (result) return;
+    if (typeof window === "undefined") return;
+    if (!getAiFixtureServiceBaseUrl()) {
+      setVerifierProgress(null);
+      return;
+    }
+    const cleanupId = window.localStorage.getItem(`cleanr.cleanup.${id}`);
+    if (!cleanupId) return;
+    let cancelled = false;
+    const poll = async () => {
+      const p = await fetchVerificationProgress(cleanupId);
+      if (cancelled) return;
+      if (p !== null) setVerifierProgress(p);
+    };
+    void poll();
+    const iv = window.setInterval(poll, 750);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [id, result]);
 
   // Poll the backend for the cleanup status
   useEffect(() => {
@@ -114,7 +167,14 @@ export default function SubmittedPage({
       <div className="px-4 pt-2 flex-1 flex flex-col">
         <Card className="p-6 relative overflow-hidden">
           <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-[color:var(--color-brand-50)] blur-2xl opacity-70" />
-          {!result && <VerifyingState stepIdx={stepIdx} />}
+          {!result && verifyUi && (
+            <VerifyingState
+              percent={verifyUi.percent}
+              message={verifyUi.message}
+              source={verifyUi.source}
+              aiBaseConfigured={aiBaseConfigured}
+            />
+          )}
           {result?.passed && bounty && (
             <SuccessState bounty={bounty} result={result} />
           )}
@@ -171,7 +231,18 @@ export default function SubmittedPage({
   );
 }
 
-function VerifyingState({ stepIdx }: { stepIdx: number }) {
+function VerifyingState({
+  percent,
+  message,
+  source,
+  aiBaseConfigured,
+}: {
+  percent: number;
+  message: string;
+  source: "live" | "fallback";
+  aiBaseConfigured: boolean;
+}) {
+  const w = Math.min(100, Math.max(0, percent));
   return (
     <div className="relative">
       <div className="flex items-center gap-3">
@@ -179,19 +250,32 @@ function VerifyingState({ stepIdx }: { stepIdx: number }) {
           <SparkleIcon width={22} height={22} />
         </span>
         <div>
-          <Badge tone="violet" size="sm">Running checks</Badge>
+          <Badge tone="violet" size="sm">
+            {source === "live" ? "AI pipeline" : "Waiting"}
+          </Badge>
           <h2 className="text-[20px] font-semibold tracking-tight mt-1.5 leading-tight">
             Verifying your submission
           </h2>
         </div>
       </div>
-      <p className="text-sm text-[color:var(--color-muted)] mt-3">
-        {CHECK_LABELS[stepIdx]}
+      <p className="text-sm text-[color:var(--color-muted)] mt-3 leading-snug">
+        {message}
       </p>
-      <div className="mt-3 h-1.5 rounded-full bg-[color:var(--color-surface)] overflow-hidden">
+      {source === "fallback" && !aiBaseConfigured && (
+        <p className="text-[11px] text-[color:var(--color-muted)] mt-1.5">
+          Configure the same URL as for uploads:{" "}
+          <code className="px-1 py-0.5 rounded bg-[color:var(--color-surface)]">NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL</code>{" "}
+          → your uvicorn host (e.g. port 8001) for step-accurate progress.
+        </p>
+      )}
+      <div className="mt-3 flex items-center justify-between text-[11px] text-[color:var(--color-muted)] tabular">
+        <span>Progress</span>
+        <span>{Math.round(w)}%</span>
+      </div>
+      <div className="mt-1 h-1.5 rounded-full bg-[color:var(--color-surface)] overflow-hidden">
         <div
-          className="h-full bg-[color:var(--color-brand-500)] transition-[width] duration-300"
-          style={{ width: `${((stepIdx + 1) / CHECK_LABELS.length) * 100}%` }}
+          className="h-full bg-[color:var(--color-brand-500)] transition-[width] duration-500 ease-out"
+          style={{ width: `${w}%` }}
         />
       </div>
     </div>

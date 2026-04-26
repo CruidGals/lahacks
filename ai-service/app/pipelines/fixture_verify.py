@@ -34,6 +34,7 @@ from app.pipelines.spec_pipeline import (
     extract_spec_candidates,
 )
 from app.pipelines.submission_pipeline import run_stage2_pipeline
+from app.verification_progress import set_verification_progress
 
 logger = logging.getLogger(__name__)
 
@@ -229,8 +230,23 @@ async def run_fixture_verification(
         req_video,
         sub_video,
     )
+    await set_verification_progress(
+        cleanup_id,
+        phase="accepted",
+        percent=5,
+        detail=(
+            f"fixture_verification_start (see log) — request={req_video} "
+            f"submission={sub_video}"
+        ),
+    )
 
     if not sub_video.exists():
+        await set_verification_progress(
+            cleanup_id,
+            phase="error",
+            percent=100,
+            detail=f"Missing submission fixture: {sub_video} (no Stage 2 run).",
+        )
         payload = _build_callback_payload(
             approved=False,
             score=0.0,
@@ -243,7 +259,31 @@ async def run_fixture_verification(
         return payload
 
     try:
+        await set_verification_progress(
+            cleanup_id,
+            phase="stage1",
+            percent=12,
+            detail=(
+                "fixture_stage1_start / cache: building ground-truth spec from "
+                "reference (DINO + IoU); see fixture_stage1_start / _complete in log."
+            ),
+        )
         spec = await ensure_fixture_spec(req_video, settings)
+        await set_verification_progress(
+            cleanup_id,
+            phase="stage1_done",
+            percent=40,
+            detail=(
+                "Stage 1 done — spec ready. Next: stage2_start on submission "
+                "(stage2_tracked, stage2_validated in log)."
+            ),
+        )
+        await set_verification_progress(
+            cleanup_id,
+            phase="stage2",
+            percent=45,
+            detail="stage2_start: running DINO + tracker on submission video…",
+        )
         result = await run_stage2_pipeline(
             str(sub_video),
             spec,
@@ -254,6 +294,12 @@ async def run_fixture_verification(
             "fixture_verification_failed cleanup_id=%s error=%s",
             cleanup_id,
             exc,
+        )
+        await set_verification_progress(
+            cleanup_id,
+            phase="error",
+            percent=100,
+            detail=f"fixture_verification_failed: {exc!s} (see exception traceback in log).",
         )
         payload = _build_callback_payload(
             approved=False,
@@ -284,12 +330,43 @@ async def run_fixture_verification(
         verdict.matched_count,
         verdict.required_count,
     )
-
+    await set_verification_progress(
+        cleanup_id,
+        phase="verdict",
+        percent=80,
+        detail=(
+            f"fixture_verification_complete — verdict approved={verdict.approved} "
+            f"matched {verdict.matched_count}/{verdict.required_count}. "
+            "Preparing callback payload."
+        ),
+    )
+    await set_verification_progress(
+        cleanup_id,
+        phase="callback",
+        percent=90,
+        detail="POSTing verification-result to backend (expect fixture_callback_delivered in log).",
+    )
     delivered = await _post_callback(cleanup_id, payload, settings)
     if not delivered:
+        await set_verification_progress(
+            cleanup_id,
+            phase="callback_failed",
+            percent=95,
+            detail=(
+                "fixture_callback_exhausted — backend did not accept callback; "
+                "check AI logs and BACKEND / INTERNAL token."
+            ),
+        )
         logger.error(
             "fixture_verification_callback_undelivered cleanup_id=%s payload=%s",
             cleanup_id,
             payload,
+        )
+    else:
+        await set_verification_progress(
+            cleanup_id,
+            phase="complete",
+            percent=100,
+            detail="Callback delivered. Backend will flip cleanup status; UI should update shortly.",
         )
     return payload
