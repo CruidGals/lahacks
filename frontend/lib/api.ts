@@ -530,38 +530,8 @@ export function buildVerificationResult(
 
   const checks: VerificationResult["checks"] = [
     {
-      label: "GPS trajectory",
+      label: "AI reasoning",
       status: passed ? "pass" : "fail",
-      detail: passed ? "Within bounty geofence" : "Trajectory off-site",
-    },
-    {
-      label: "Session duration",
-      status: passed ? "pass" : "fail",
-      detail: passed ? "On-site long enough" : "Session too short",
-    },
-    {
-      label: "Nonce watermark",
-      status: passed ? "pass" : "skipped",
-    },
-    {
-      label: "Reference frame match",
-      status:
-        (cleanup.verification_result?.["scene_match"] as boolean | undefined) ??
-        passed
-          ? "pass"
-          : "fail",
-    },
-    {
-      label: "Before/after change",
-      status:
-        (cleanup.verification_result?.["task_complete"] as boolean | undefined) ??
-        passed
-          ? "pass"
-          : "fail",
-    },
-    {
-      label: "Reasoning",
-      status: passed ? "pass" : "skipped",
       detail: reasoning,
     },
   ];

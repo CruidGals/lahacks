@@ -126,17 +126,19 @@ export default function SubmittedPage({
             Verification breakdown
           </h3>
           <Card className="p-4 grid gap-2.5">
-            {(result?.checks ??
-              CHECK_LABELS.slice(1, 7).map((label, i) => ({
-                label,
-                status: i <= stepIdx - 1 ? "pass" : "skipped",
-              }))).map((c, i) => (
+            {(result?.checks ?? [
+              {
+                label: "AI reasoning",
+                status: "skipped" as const,
+                detail: "Waiting on the verifier…",
+              },
+            ]).map((c, i) => (
               <CheckRow
                 key={i}
                 label={c.label}
                 detail={"detail" in c ? c.detail : undefined}
                 status={c.status as "pass" | "fail" | "skipped"}
-                pending={!result && i > stepIdx - 1}
+                pending={!result}
               />
             ))}
           </Card>
