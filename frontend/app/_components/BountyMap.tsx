@@ -84,8 +84,39 @@ function MapEvents({
 function CenterFlyTo({ center }: { center: { lat: number; lng: number } }) {
   const map = useMap();
   useEffect(() => {
+    // Skip when the map is already at this center (e.g. when the change came
+    // from the user panning the map and `onMapMove` echoed it back into
+    // state). Without this guard we'd fly back to the same spot on every
+    // pan, fighting the user's drag.
+    const cur = map.getCenter();
+    if (
+      Math.abs(cur.lat - center.lat) < 1e-5 &&
+      Math.abs(cur.lng - center.lng) < 1e-5
+    ) {
+      return;
+    }
     map.flyTo([center.lat, center.lng], map.getZoom(), { duration: 0.6 });
   }, [center.lat, center.lng, map]);
+  return null;
+}
+
+// Leaflet measures its container at mount. When the map is rendered inside
+// a flex column whose height resolves on a later layout pass, the initial
+// measurement comes back at 0 and tiles never paint. Force a re-measure
+// after mount and whenever the window resizes.
+function MapInvalidator() {
+  const map = useMap();
+  useEffect(() => {
+    const ids: number[] = [];
+    ids.push(window.setTimeout(() => map.invalidateSize(), 0));
+    ids.push(window.setTimeout(() => map.invalidateSize(), 200));
+    const onResize = () => map.invalidateSize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      ids.forEach((id) => window.clearTimeout(id));
+      window.removeEventListener("resize", onResize);
+    };
+  }, [map]);
   return null;
 }
 
@@ -164,6 +195,7 @@ export default function BountyMap({
       )}
       <MapEvents onMapMove={onMapMove} />
       <CenterFlyTo center={center} />
+      <MapInvalidator />
     </MapContainer>
   );
 }

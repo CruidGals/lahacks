@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
-import { refundEscrowToPoster, releaseBountyToClaimer } from '../lib/solana.js';
+import { releaseBountyToClaimer } from '../lib/solana.js';
 import { analyzeTrajectory } from '../lib/trajectory.js';
 
 export const cleanupRouter = Router();
@@ -343,7 +343,13 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
 
   const verificationJson = effectiveResult as Record<string, unknown>;
 
-  if (effectiveResult.verified) {
+  const shouldPayout =
+    effectiveResult.verified === true &&
+    effectiveResult.scene_match !== false &&
+    effectiveResult.task_complete !== false &&
+    (effectiveResult.fraud_flags?.length ?? 0) === 0;
+
+  if (shouldPayout) {
     if (cleanup.status === 'verified' && cleanup.payout_tx_sig) {
       res.json({
         ok: true,
@@ -461,53 +467,12 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
-  if (!bounty.poster_id) {
-    res.status(500).json({ error: 'Bounty has no poster for refund.' });
-    return;
-  }
-
-  const { data: poster, error: posterError } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', bounty.poster_id)
-    .maybeSingle();
-
-  if (posterError) {
-    res.status(500).json({ error: 'Failed to load poster for refund.' });
-    return;
-  }
-  if (!poster) {
-    res.status(404).json({ error: 'Poster user not found for refund.' });
-    return;
-  }
-
-  let refundTxSig: string;
-  try {
-    refundTxSig = await refundEscrowToPoster({
-      bountyId: bounty.id,
-      posterWallet: poster.wallet_address,
-      cleanupId: cleanup.id,
-      rewardLamports: bounty.reward_lamports
-    });
-  } catch (e) {
-    console.warn(
-      'Refund transaction failed; using simulated refund signature for demo:',
-      e instanceof Error ? e.message : e
-    );
-    refundTxSig = `simulated_refund_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
-  }
-
-  const verificationWithRefund = {
-    ...verificationJson,
-    refund_tx_sig: refundTxSig
-  };
-
   const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
     supabase
       .from('cleanups')
       .update({
         status: 'rejected',
-        verification_result: verificationWithRefund,
+        verification_result: verificationJson,
         confidence_score: effectiveResult.confidence ?? null
       })
       .eq('id', cleanup.id),
@@ -536,7 +501,6 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
   res.json({
     ok: true,
     verified: false,
-    refund_tx_sig: refundTxSig,
-    refund_status: 'escrow_refunded_to_poster'
+    refund_status: 'escrow_retained'
   });
 });
