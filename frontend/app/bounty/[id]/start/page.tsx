@@ -40,7 +40,17 @@ export default function StartTaskPage({
     // restore session if any
     if (typeof window !== "undefined") {
       const sid = window.localStorage.getItem(`cleanr.session.${id}`);
-      if (sid) getSession(sid).then((s) => s && setSession(s));
+      if (sid) {
+        getSession(sid).then((s) => {
+          // Only resume genuinely active sessions; stale submitted/rejected/
+          // cancelled sessions should not block starting a fresh run.
+          if (s?.status === "active") {
+            setSession(s);
+            return;
+          }
+          window.localStorage.removeItem(`cleanr.session.${id}`);
+        });
+      }
     }
   }, [id]);
 

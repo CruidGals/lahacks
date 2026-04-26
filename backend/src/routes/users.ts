@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { Keypair } from '@solana/web3.js';
+import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
 import { signRequest } from '@worldcoin/idkit-core/signing';
 import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
@@ -34,6 +35,16 @@ type VerifyV4Response = {
 function worldEnvMode(): 'production' | 'staging' {
   const configured = process.env.WORLD_ID_ENVIRONMENT?.trim().toLowerCase();
   return configured === 'production' ? 'production' : 'staging';
+}
+
+async function getWalletBalanceSol(walletAddress: string): Promise<number> {
+  const connection = new Connection(
+    process.env.SOLANA_RPC_URL ?? clusterApiUrl('devnet'),
+    'confirmed'
+  );
+  const wallet = new PublicKey(walletAddress);
+  const lamports = await connection.getBalance(wallet, 'confirmed');
+  return Number((lamports / 1_000_000_000).toFixed(4));
 }
 
 function extractNullifierMarker(payload: Record<string, unknown>): string | null {
@@ -183,6 +194,16 @@ usersRouter.get('/me', async (req, res) => {
       .map((iso) => new Date(iso).toISOString().slice(0, 10))
   );
 
+  let walletBalanceSol = 0;
+  try {
+    walletBalanceSol = await getWalletBalanceSol(user.wallet_address);
+  } catch (error) {
+    console.warn(
+      `Failed to fetch on-chain balance for user=${user.id} wallet=${user.wallet_address}:`,
+      error
+    );
+  }
+
   res.json({
     user: {
       ...user,
@@ -191,7 +212,7 @@ usersRouter.get('/me', async (req, res) => {
       current_streak: activeDays.size,
       wallet: {
         address: user.wallet_address,
-        balance_sol: Number(totalEarnedSol.toFixed(4))
+        balance_sol: walletBalanceSol
       },
       recent_completed: recent
     }
