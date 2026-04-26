@@ -317,8 +317,8 @@ async def _sample_and_detect(
     str,
 ]:
     path, cleanup = await _normalize_to_local_file(video)
-    sample_every = int(getattr(settings, "spec_sample_every_n_frames", 20))
-    max_samples = int(getattr(settings, "spec_max_samples", 8))
+    sample_every = int(getattr(settings, "spec_sample_every_n_frames", 120))
+    max_samples = int(getattr(settings, "spec_max_samples", 100000))
     try:
         samples_raw, width, height, _fps, duration = await asyncio.to_thread(
             _sample_frames_sync,
