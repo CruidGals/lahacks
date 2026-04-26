@@ -243,39 +243,57 @@ function StepLocation({
           Where is the work?
         </h2>
         <p className="text-sm text-[color:var(--color-muted)] mt-1">
-          Drag the pin to the exact spot. We&rsquo;ll geofence it within ~25 m for verification.
+          Drag the pin, or pan the map and tap{" "}
+          <span className="font-medium text-[color:var(--color-ink)]">
+            Drop pin here
+          </span>
+          . We&rsquo;ll geofence it within ~25 m for verification.
         </p>
       </div>
-      <div className="relative flex-1 mx-4 rounded-[20px] overflow-hidden border border-[color:var(--color-border)]" style={{ minHeight: 320 }}>
-        <BountyMapClient
-          bounties={[]}
-          center={mapCenter}
-          userLocation={userLocation}
-          onPinTap={() => {}}
-          draggable
-          pinPosition={pinPos}
-          onPinMove={onPinMove}
-          onMapMove={onMapMove}
-        />
-        {/* Center crosshair to set pin where map is centered */}
+      <div className="relative flex-1 min-h-[360px] mx-4 mb-3 rounded-[20px] overflow-hidden border border-[color:var(--color-border)] bg-[#eef2ee]">
+        <div className="absolute inset-0">
+          <BountyMapClient
+            bounties={[]}
+            center={mapCenter}
+            userLocation={userLocation}
+            onPinTap={() => {}}
+            draggable
+            pinPosition={pinPos}
+            onPinMove={onPinMove}
+            onMapMove={onMapMove}
+          />
+        </div>
+
+        {/* Subtle center crosshair so the user can see where "Drop pin here" will land */}
+        <div className="pointer-events-none absolute inset-0 grid place-items-center z-[1]">
+          <span className="grid place-items-center w-7 h-7 rounded-full bg-white/85 ring-2 ring-[color:var(--color-brand-500)] text-[color:var(--color-brand-600)] shadow-[var(--shadow-card)]">
+            <CrosshairIcon width={14} height={14} />
+          </span>
+        </div>
+
+        {/* Coord pill (top-left) */}
+        <div className="absolute left-3 top-3 z-[2] px-2.5 py-1 rounded-full bg-white/95 backdrop-blur shadow-[var(--shadow-card)] border border-[color:var(--color-border)] flex items-center gap-1.5 text-[11px] tabular text-[color:var(--color-muted)]">
+          <CompassIcon width={12} height={12} />
+          {pinPos.lat.toFixed(5)}, {pinPos.lng.toFixed(5)}
+        </div>
+
+        {/* Drop-pin CTA (bottom-center) */}
         <button
           onClick={() => onPinMove(mapCenter)}
-          className="absolute left-1/2 -translate-x-1/2 bottom-3 px-3 py-1.5 rounded-full bg-white text-[12px] font-medium shadow-[var(--shadow-card)] border border-[color:var(--color-border)] flex items-center gap-1.5"
+          className="absolute left-1/2 -translate-x-1/2 bottom-3 z-[2] px-3.5 py-2 rounded-full bg-white text-[12px] font-medium shadow-[var(--shadow-card)] border border-[color:var(--color-border)] flex items-center gap-1.5 active:scale-[0.98] transition-transform"
         >
           <LocationIcon width={14} height={14} />
           Drop pin here
         </button>
+
+        {/* Recenter (bottom-right) */}
         <button
           onClick={onRecenter}
-          aria-label="Recenter"
-          className="absolute right-3 bottom-3 grid place-items-center w-10 h-10 rounded-full bg-white shadow-[var(--shadow-card)] border border-[color:var(--color-border)]"
+          aria-label="Recenter on me"
+          className="absolute right-3 bottom-3 z-[2] grid place-items-center w-10 h-10 rounded-full bg-white shadow-[var(--shadow-card)] border border-[color:var(--color-border)] active:scale-95 transition-transform"
         >
           <CrosshairIcon width={18} height={18} />
         </button>
-      </div>
-      <div className="px-4 mt-3 mb-3 text-xs text-[color:var(--color-muted)] tabular flex items-center gap-1">
-        <CompassIcon width={14} height={14} />
-        Pin: {pinPos.lat.toFixed(5)}, {pinPos.lng.toFixed(5)}
       </div>
     </div>
   );
