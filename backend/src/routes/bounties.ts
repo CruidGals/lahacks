@@ -13,6 +13,10 @@ import { escrowBounty } from '../lib/solana.js';
 
 export const bountyRouter = Router();
 
+function bypassVerificationForTesting(): boolean {
+  return process.env.BYPASS_VERIFICATION_FOR_TESTING?.trim().toLowerCase() === 'true';
+}
+
 const createBountySchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
@@ -49,10 +53,25 @@ bountyRouter.post('/', async (req, res) => {
   }
 
   const rewardLamports = rewardSolToLamports(parsed.data.reward_sol);
-  const escrowTxSig = await escrowBounty({
-    posterId: user.id,
-    rewardLamports
-  });
+  let escrowTxSig: string;
+  try {
+    escrowTxSig = await escrowBounty({
+      posterId: user.id,
+      posterWallet: user.wallet_address,
+      rewardLamports
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to escrow bounty funds.';
+    const lowered = message.toLowerCase();
+    const isFundingConfigIssue =
+      lowered.includes('insufficient balance') ||
+      lowered.includes('poster wallet is required') ||
+      lowered.includes('requires a client-signed escrow transfer') ||
+      lowered.includes('missing required env var');
+    res.status(isFundingConfigIssue ? 400 : 500).json({ error: message });
+    return;
+  }
 
   const { data: created, error: insertError } = await supabase
     .from('bounties')
@@ -250,6 +269,11 @@ bountyRouter.post('/:id/claim', async (req, res) => {
   }
   if (!bounty) {
     res.status(404).json({ error: 'Bounty not found.' });
+    return;
+  }
+
+  if (!bypassVerificationForTesting() && bounty.poster_id === user.id) {
+    res.status(403).json({ error: 'You cannot claim a bounty that you posted.' });
     return;
   }
 

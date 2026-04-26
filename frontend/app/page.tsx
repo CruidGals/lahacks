@@ -49,6 +49,7 @@ export default function MapHome() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [rewardFilter, setRewardFilter] = useState<typeof REWARD_BUCKETS[number]["id"]>("any");
   const [center, setCenter] = useState(DEFAULT_LOCATION);
+  const [isRecentering, setIsRecentering] = useState(false);
 
   useEffect(() => {
     getBounties().then(setBounties);
@@ -78,6 +79,27 @@ export default function MapHome() {
   const totalOpen = bounties?.filter((b) => b.status === "open").length ?? 0;
 
   const onRecenter = () => {
+    if (typeof window === "undefined") return;
+
+    // Always request a fresh GPS fix on tap so this works even if the initial
+    // geolocation hook failed/timed out or has gone stale.
+    if ("geolocation" in navigator) {
+      setIsRecentering(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setIsRecentering(false);
+        },
+        () => {
+          // Fallback to last known hook value if available.
+          if (geo.location) setCenter({ ...geo.location });
+          setIsRecentering(false);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+      return;
+    }
+
     if (geo.location) setCenter({ ...geo.location });
   };
 
@@ -129,6 +151,7 @@ export default function MapHome() {
       <button
         onClick={onRecenter}
         aria-label="Recenter on me"
+        disabled={isRecentering}
         className="absolute right-4 z-10 grid place-items-center w-11 h-11 rounded-full bg-white shadow-[var(--shadow-pop)] border border-[color:var(--color-border)] active:scale-95 transition-transform"
         style={{ bottom: "calc(140px + env(safe-area-inset-bottom))" }}
       >
