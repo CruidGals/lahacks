@@ -68,16 +68,77 @@ sessionRouter.post('/start', async (req, res) => {
   }
 
   const nonce = createNonce();
-  const { data: session, error: sessionError } = await supabase
+  const nowIso = new Date().toISOString();
+  const { data: existingSession, error: existingSessionError } = await supabase
     .from('sessions')
-    .insert({
-      bounty_id: bounty.id,
-      user_id: user.id,
-      nonce,
-      status: 'active'
-    })
     .select('*')
-    .single();
+    .eq('bounty_id', bounty.id)
+    .eq('user_id', user.id)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingSessionError) {
+    res.status(500).json({ error: 'Failed to load existing session state.' });
+    return;
+  }
+
+  // If an active session already exists, return it idempotently so clients can
+  // safely retry "start" without creating duplicate rows.
+  if (existingSession?.status === 'active') {
+    res.status(200).json({
+      session_id: existingSession.id,
+      nonce: existingSession.nonce
+    });
+    return;
+  }
+
+  let session: { id: string } | null = null;
+  let sessionError: { message?: string } | null = null;
+
+  if (existingSession) {
+    const { data: reactivatedSession, error: reactivatedSessionError } =
+      await supabase
+        .from('sessions')
+        .update({
+          nonce,
+          status: 'active',
+          started_at: nowIso,
+          ended_at: null
+        })
+        .eq('id', existingSession.id)
+        .select('*')
+        .single();
+
+    if (!reactivatedSessionError && reactivatedSession) {
+      // Start from a clean trajectory window for the new claim/session run.
+      const { error: deletePingError } = await supabase
+        .from('gps_pings')
+        .delete()
+        .eq('session_id', reactivatedSession.id);
+      if (deletePingError) {
+        res.status(500).json({ error: 'Failed to reset previous GPS pings.' });
+        return;
+      }
+    }
+
+    session = reactivatedSession;
+    sessionError = reactivatedSessionError;
+  } else {
+    const { data: insertedSession, error: insertedSessionError } = await supabase
+      .from('sessions')
+      .insert({
+        bounty_id: bounty.id,
+        user_id: user.id,
+        nonce,
+        status: 'active'
+      })
+      .select('*')
+      .single();
+
+    session = insertedSession;
+    sessionError = insertedSessionError;
+  }
 
   if (sessionError || !session) {
     res.status(500).json({ error: 'Failed to start session.' });
