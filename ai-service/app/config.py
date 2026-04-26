@@ -63,6 +63,34 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO")
 
+    openai_api_key: str | None = Field(
+        default=None,
+        description="API key for the OpenAI vision pipelines (Person A, B, disposal).",
+    )
+    openai_model: str = Field(
+        default="gpt-5.4-mini",
+        description="OpenAI model name for all three new pipelines.",
+    )
+    openai_max_tokens: int = Field(
+        default=2000,
+        ge=128,
+        le=16000,
+        description="Max tokens cap for each pipeline LLM call.",
+    )
+    pipeline_frames_per_video: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="How many evenly-spaced frames to extract per video.",
+    )
+    pipeline_use_stub: bool = Field(
+        default=False,
+        description=(
+            "When true, the LLM client returns deterministic dummy JSON for "
+            "every pipeline so tests + offline development never burn credits."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

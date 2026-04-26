@@ -20,7 +20,7 @@ FastAPI service that orchestrates AI verification for completed cleanup bounties
 python -m venv .venv
 . .venv/Scripts/Activate.ps1   # on Windows PowerShell
 pip install -r requirements.txt
-copy .env.example .env
+# create ai-service/.env with at least OPENAI_API_KEY (see app/config.py for all knobs)
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -77,7 +77,7 @@ PYTHONPATH=. python scripts/object_detection_demo.py ../data/videos/fixtures/egR
 
 ## Deployment
 
-A `Dockerfile` is provided for Render / Fly / Railway. Set the env vars from `.env.example` in your deploy target.
+A `Dockerfile` is provided for Render / Fly / Railway. Set the env vars defined in `app/config.py` (`OPENAI_API_KEY`, `BACKEND_BASE_URL`, `VISION_DETECTOR_BACKEND`, etc.) in your deploy target.
 
 ## Contracts
 

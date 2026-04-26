@@ -15,6 +15,8 @@ const createCleanupSchema = z.object({
 
 const verificationResultSchema = z.object({
   verified: z.boolean(),
+  final_result: z.string().optional(),
+  artifact_removed: z.boolean().optional(),
   confidence: z.number().min(0).max(1).optional(),
   scene_match: z.boolean().optional(),
   task_complete: z.boolean().optional(),

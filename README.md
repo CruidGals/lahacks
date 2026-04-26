@@ -26,7 +26,8 @@ npm run dev
 ```bash
 cd backend
 npm install
-cp .env.example .env
+# create backend/.env with PORT, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+# WORLD_ID_APP_ID, SOLANA_RPC_URL (devnet by default)
 npm run dev
 ```
 
@@ -37,7 +38,8 @@ cd ai-service
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+# create ai-service/.env with at least OPENAI_API_KEY; see app/config.py
+# for every tunable env var (backend URL, thresholds, detector backend, etc.)
 uvicorn app.main:app --reload --port 8001
 ```
 
