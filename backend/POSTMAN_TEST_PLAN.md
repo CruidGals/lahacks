@@ -36,8 +36,10 @@ For this plan, use:
 - `POST /api/users/verify`
 - `POST /api/bounties`
 - `GET /api/bounties`
+- `GET /api/bounties/me/claimed`
 - `GET /api/bounties/:id`
 - `POST /api/bounties/:id/claim`
+- `POST /api/bounties/:id/unclaim`
 - `POST /api/sessions/start`
 - `POST /api/sessions/:id/ping`
 - `POST /api/cleanups`
@@ -212,6 +214,23 @@ pm.environment.set("bountyId", json.bounty.id);
 - Body: none
 - Expect: `200 OK`, includes `claim_expires_at`
 
+### Step 10a: List my active claims (claimer)
+
+- Method: `GET`
+- URL: `{{baseUrl}}/api/bounties/me/claimed`
+- Headers: `Authorization: Bearer {{userBId}}`
+- Body: none
+- Expect: `200 OK`, `items` includes `{{bountyId}}` with `status: "claimed"` and `claim_expires_at`
+
+### Step 10b: Cancel claim (claimer) — optional smoke test
+
+- Method: `POST`
+- URL: `{{baseUrl}}/api/bounties/{{bountyId}}/unclaim`
+- Headers: `Authorization: Bearer {{userBId}}`
+- Body: none
+- Expect: `200 OK`, `bounty.status = "open"`, `claimer_id = null`
+- Note: Run this only if you want to test the cancel flow. After running it, re-claim with Step 10 before continuing the happy path.
+
 ### Step 11: Start session (claimer)
 
 - Method: `POST`
@@ -334,6 +353,9 @@ pm.environment.set("cleanupId", json.cleanup_id);
 11. `GET /api/bounties/:id` unknown id -> `404`
 12. Claim already completed bounty -> `409`
 13. Claim already claimed and not expired -> `409`
+13a. Unclaim a bounty you didn't claim -> `403`
+13b. Unclaim a completed bounty -> `409`
+13c. Unclaim a bounty that isn't currently claimed -> `409`
 14. Start session without valid claim owner -> `403`
 15. Start session on expired claim lock -> `409`
 16. Ping session not owned by caller -> `403`
@@ -379,6 +401,8 @@ Expect: `200 OK`, includes `refund_tx_sig`, `refund_status`.
    - List (bbox)
    - Get by ID
    - Claim
+   - My Claimed
+   - Cancel Claim (optional)
 4. `Sessions`
    - Start
    - Ping #1

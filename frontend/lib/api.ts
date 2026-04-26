@@ -49,6 +49,15 @@ type BackendBounty = {
   } | null;
 };
 
+type BackendClaimedBounty = BackendBounty & {
+  claim_expires_at: string | null;
+};
+
+export type ClaimedBounty = Bounty & {
+  claim_expires_at: string;
+  has_active_session: boolean;
+};
+
 type BackendBountyStatus = "open" | "claimed" | "completed" | "expired";
 
 type BackendCleanup = {
@@ -314,12 +323,44 @@ export async function claimBounty(id: string): Promise<Bounty> {
   return mapBounty(json.bounty);
 }
 
-export async function cancelClaim(): Promise<Bounty> {
-  // The backend has no cancel endpoint yet — claims expire automatically
-  // after the 4h window. Surface that to the caller.
-  throw new Error(
-    "Claims auto-expire after 4 hours; manual cancel isn't supported yet."
+export async function getMyClaimedBounties(): Promise<ClaimedBounty[]> {
+  const json = await api<{ as_of: string; items: BackendClaimedBounty[] }>(
+    "/api/bounties/me/claimed"
   );
+  return json.items.map((b) => {
+    const mapped = mapBounty(b);
+    return {
+      ...mapped,
+      claim_expires_at:
+        b.claim_expires_at ??
+        mapped.claim_lock_until ??
+        new Date(Date.now() + CLAIM_LOCK_HOURS * 3600_000).toISOString(),
+      has_active_session: hasLocalSession(b.id),
+    };
+  });
+}
+
+export async function cancelClaim(id: string): Promise<Bounty> {
+  const json = await api<{ message: string; bounty: BackendBounty }>(
+    `/api/bounties/${id}/unclaim`,
+    { method: "POST" }
+  );
+
+  // Clear any local session/cleanup pointers so the UI doesn't try to
+  // resume a task on a bounty the user no longer owns.
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(`cleanr.session.${id}`);
+    window.localStorage.removeItem(`cleanr.cleanup.${id}`);
+    window.localStorage.removeItem(`cleanr.pending.${id}`);
+    window.localStorage.removeItem(`cleanr.result.${id}`);
+  }
+
+  return mapBounty(json.bounty);
+}
+
+function hasLocalSession(bountyId: string): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(window.localStorage.getItem(`cleanr.session.${bountyId}`));
 }
 
 // ---------- Sessions ----------

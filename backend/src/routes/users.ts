@@ -122,6 +122,8 @@ usersRouter.post('/world/rp-context', async (req, res) => {
     action
   });
 
+
+  console.log('sig', sig);
   res.json({
     app_id: appId,
     action,
