@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
@@ -49,6 +50,27 @@ CLASS_NAMES = [
     "train",
     "tvmonitor",
 ]
+
+
+def _ensure_replicate_token_loaded() -> None:
+    """Load REPLICATE_API_TOKEN from ai-service/.env if not already in env."""
+    if os.environ.get("REPLICATE_API_TOKEN"):
+        return
+
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "REPLICATE_API_TOKEN":
+            token = value.strip().strip('"').strip("'")
+            if token:
+                os.environ["REPLICATE_API_TOKEN"] = token
+            return
 
 
 @dataclass
@@ -156,6 +178,7 @@ async def _detect_objects_grounding_dino(
     box_threshold: float,
     text_threshold: float,
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    _ensure_replicate_token_loaded()
     try:
         import replicate
     except Exception as exc:  # pragma: no cover - import path depends on optional dep
@@ -197,6 +220,28 @@ async def _detect_objects_grounding_dino(
         raise RuntimeError(f"Replicate call failed after {max_retries} retries") from last_err
     finally:
         frame_path.unlink(missing_ok=True)
+
+
+@dataclass
+class TrackedObject:
+    """Per-track metadata produced by :func:`track_objects_with_metadata`.
+
+    The IoU tracker collapses many per-frame detections into one logical
+    object. This dataclass keeps the slice of metadata Stage 1 needs to
+    surface candidates to the requester (label, peak detection bbox, peak
+    confidence, source frame index/timestamp, and how many frames the track
+    survived for).
+    """
+
+    track_id: int
+    label: str
+    peak_confidence: float
+    peak_bbox: tuple[int, int, int, int]
+    peak_frame_index: int
+    peak_timestamp_s: float
+    first_frame_index: int
+    last_frame_index: int
+    hit_count: int
 
 
 def _iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
@@ -300,6 +345,129 @@ def _track_unique_objects(
         return confirmed, frame_track_boxes
 
     return total_unique, frame_track_boxes
+
+
+def track_objects_with_metadata(
+    frames_detections: list[list[tuple[str, float, tuple[int, int, int, int]]]],
+    *,
+    timestamps: list[float] | None = None,
+    iou_threshold: float = 0.25,
+    max_missed_frames: int = 3,
+    min_confidence: float = 0.0,
+    min_hits: int = 1,
+) -> list[TrackedObject]:
+    """Group per-frame detections into unique tracked objects with metadata.
+
+    Mirrors :func:`_track_unique_objects` but keeps richer per-track state so
+    downstream consumers (Stage 1 spec extraction, demo overlays, the verifier)
+    can surface the *peak* detection of each track rather than only counting
+    them.
+
+    ``timestamps`` is optional; when provided, indices into it must align with
+    ``frames_detections``. Falls back to using the frame index as the timestamp
+    so callers without timing data (legacy demos, tests) still get a sensible
+    ``peak_timestamp_s`` value.
+    """
+
+    timestamps = timestamps or []
+
+    @dataclass
+    class _LiveTrack:
+        label: str
+        bbox: tuple[int, int, int, int]
+        peak_confidence: float
+        peak_bbox: tuple[int, int, int, int]
+        peak_frame_index: int
+        peak_timestamp_s: float
+        first_frame_index: int
+        last_frame_index: int
+        hit_count: int
+        missed: int
+
+    active: dict[str, dict[int, _LiveTrack]] = {}
+    finalized: dict[int, _LiveTrack] = {}
+    next_track_id = 1
+
+    for frame_idx, frame_dets in enumerate(frames_detections):
+        ts = timestamps[frame_idx] if frame_idx < len(timestamps) else float(frame_idx)
+
+        for tracks in active.values():
+            for state in tracks.values():
+                state.missed += 1
+
+        for label, conf, box in frame_dets:
+            if conf < min_confidence:
+                continue
+
+            label_tracks = active.setdefault(label, {})
+            best_track_id: int | None = None
+            best_iou = 0.0
+            for track_id, state in label_tracks.items():
+                score = _iou(box, state.bbox)
+                if score > best_iou:
+                    best_iou = score
+                    best_track_id = track_id
+
+            if best_track_id is not None and best_iou >= iou_threshold:
+                state = label_tracks[best_track_id]
+                state.bbox = box
+                state.missed = 0
+                state.last_frame_index = frame_idx
+                state.hit_count += 1
+                if conf > state.peak_confidence:
+                    state.peak_confidence = conf
+                    state.peak_bbox = box
+                    state.peak_frame_index = frame_idx
+                    state.peak_timestamp_s = ts
+            else:
+                track_id = next_track_id
+                next_track_id += 1
+                label_tracks[track_id] = _LiveTrack(
+                    label=label,
+                    bbox=box,
+                    peak_confidence=conf,
+                    peak_bbox=box,
+                    peak_frame_index=frame_idx,
+                    peak_timestamp_s=ts,
+                    first_frame_index=frame_idx,
+                    last_frame_index=frame_idx,
+                    hit_count=1,
+                    missed=0,
+                )
+
+        for label, tracks in list(active.items()):
+            stale = [
+                track_id
+                for track_id, state in tracks.items()
+                if state.missed > max_missed_frames
+            ]
+            for track_id in stale:
+                finalized[track_id] = tracks.pop(track_id)
+            if not tracks:
+                del active[label]
+
+    for tracks in active.values():
+        for track_id, state in tracks.items():
+            finalized[track_id] = state
+
+    out: list[TrackedObject] = []
+    for track_id, state in sorted(finalized.items()):
+        if state.hit_count < min_hits:
+            continue
+        out.append(
+            TrackedObject(
+                track_id=track_id,
+                label=state.label,
+                peak_confidence=float(state.peak_confidence),
+                peak_bbox=state.peak_bbox,
+                peak_frame_index=state.peak_frame_index,
+                peak_timestamp_s=float(state.peak_timestamp_s),
+                first_frame_index=state.first_frame_index,
+                last_frame_index=state.last_frame_index,
+                hit_count=state.hit_count,
+            )
+        )
+    return out
 
 
 def summarize_video_objects(
@@ -487,6 +655,38 @@ def most_common_labels(labels: Counter[str], top_n: int = 8) -> Iterable[tuple[s
     return labels.most_common(top_n)
 
 
+def _format_counter(counter: Counter[str], top_n: int = 6) -> str:
+    if not counter:
+        return "none"
+    return ", ".join(f"{label}:{count}" for label, count in counter.most_common(top_n))
+
+
+def _draw_overlay_hud(
+    frame,
+    *,
+    active_labels: Counter[str],
+    cumulative_unique: Counter[str],
+    color: tuple[int, int, int],
+) -> None:
+    lines = [
+        f"active: {_format_counter(active_labels)}",
+        f"unique_seen: {_format_counter(cumulative_unique)}",
+    ]
+    cv2.rectangle(frame, (12, 12), (frame.shape[1] - 12, 74), (0, 0, 0), -1)
+    y = 38
+    for line in lines:
+        cv2.putText(
+            frame,
+            line,
+            (20, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            color,
+            2,
+        )
+        y += 26
+
+
 async def annotate_video_grounding_dino(
     input_video: Path,
     output_video: Path,
@@ -546,13 +746,23 @@ async def annotate_video_grounding_dino(
         min_confidence=box_threshold,
     )
 
+    # Map each track to the first sampled frame where it appears so we can
+    # surface a cumulative "unique items seen so far" HUD as the video plays.
+    first_seen_sample_for_track: dict[int, int] = {}
+    for sample_idx in range(len(detections_per_sample)):
+        for track_id in track_boxes.get(str(sample_idx), {}):
+            first_seen_sample_for_track.setdefault(track_id, sample_idx)
+
     sampled_idx = 0
     last_seen: dict[int, tuple[str, tuple[int, int, int, int], int]] = {}
+    cumulative_unique_seen: Counter[str] = Counter()
     for idx, frame in enumerate(cached_frames):
         if idx % sample_every_n_frames == 0 and sampled_idx < len(detections_per_sample):
             boxes_for_frame = track_boxes.get(str(sampled_idx), {})
             for track_id, (label, bbox) in boxes_for_frame.items():
                 last_seen[track_id] = (label, bbox, idx)
+                if first_seen_sample_for_track.get(track_id) == sampled_idx:
+                    cumulative_unique_seen[label] += 1
             sampled_idx += 1
 
         expired: list[int] = []
@@ -573,15 +783,12 @@ async def annotate_video_grounding_dino(
         for track_id in expired:
             del last_seen[track_id]
 
-        summary_text = "unique: " + ", ".join(f"{k}:{v}" for k, v in unique_counts.most_common(4))
-        cv2.putText(
+        active_labels: Counter[str] = Counter(label for label, _bbox, _seen in last_seen.values())
+        _draw_overlay_hud(
             frame,
-            summary_text,
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 0),
-            2,
+            active_labels=active_labels,
+            cumulative_unique=cumulative_unique_seen or unique_counts,
+            color=(255, 255, 0),
         )
         writer.write(frame)
 
