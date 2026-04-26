@@ -44,6 +44,11 @@ const bboxSchema = z.object({
   max_lng: z.coerce.number().min(-180).max(180).optional()
 });
 
+function bypassVerificationForTesting(): boolean {
+  const raw = process.env.BYPASS_VERIFICATION_FOR_TESTING?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 bountyRouter.post('/', async (req, res) => {
   const user = await requireAuthUser(req, res);
   if (!user) return;

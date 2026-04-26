@@ -33,7 +33,7 @@ import {
 } from "../../lib/api";
 import { ApiError } from "../../lib/http";
 import type { User } from "../../lib/types";
-import { formatRelative, formatTimeLeft, formatUsd, formatXp } from "../../lib/format";
+import { formatRelative, formatReward, formatTimeLeft, formatUsd, formatXp } from "../../lib/format";
 import { useToast } from "../_components/Toast";
 
 export default function ProfilePage() {
@@ -345,7 +345,7 @@ export default function ProfilePage() {
                   </p>
                 </div>
                 <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)]">
-                  +{c.reward_sol.toFixed(2)} SOL
+                  +{formatReward(c)}
                 </span>
               </Card>
             ))}
@@ -453,7 +453,7 @@ function ClaimedBountyCard({
             <span className="inline-flex items-center gap-1">
               <CoinIcon width={11} height={11} />
               <span className="font-semibold text-[color:var(--color-brand-600)]">
-                {bounty.reward_sol.toFixed(2)} SOL
+                {formatReward(bounty)}
               </span>
             </span>
             <span className="inline-flex items-center gap-1">

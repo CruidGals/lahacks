@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
-import { releaseBountyToClaimer } from '../lib/solana.js';
+import { refundEscrowToPoster, releaseBountyToClaimer } from '../lib/solana.js';
 import { analyzeTrajectory } from '../lib/trajectory.js';
 
 export const cleanupRouter = Router();
