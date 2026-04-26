@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 from app.object_detection import (
@@ -12,6 +13,13 @@ from app.object_detection import (
     summarize_video_objects,
     summarize_video_objects_grounding_dino,
 )
+
+
+def _timestamped_output_path(requested_output: Path) -> tuple[Path, Path]:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = Path("artifacts") / "video-debug-runs" / timestamp
+    output_path = run_dir / requested_output.name
+    return run_dir, output_path
 
 
 def main() -> None:
@@ -36,6 +44,7 @@ def main() -> None:
         help="Grounding DINO dot-separated category query.",
     )
     args = parser.parse_args()
+    run_dir, resolved_output = _timestamped_output_path(args.output)
 
     if args.backend == "grounding_dino":
         summary = asyncio.run(
@@ -43,8 +52,9 @@ def main() -> None:
         )
     else:
         summary = summarize_video_objects(args.video_path)
-    output = annotate_video(args.video_path, args.output)
+    output = annotate_video(args.video_path, resolved_output)
 
+    print(f"output_dir={run_dir.resolve()}")
     print(f"frames_sampled={summary.frames_sampled}")
     print("unique_tracked_objects:")
     for label, count in most_common_labels(summary.labels):
