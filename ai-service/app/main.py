@@ -6,10 +6,12 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, Depends, FastAPI, status
+from pydantic import BaseModel, Field
 
 from app.api.routes import router as pipelines_router
 from app.config import Settings, get_settings
 from app.models import VerifyAccepted, VerifyRequest
+from app.pipelines.fixture_verify import run_fixture_verification
 from app.verify_pipeline import run_verification
 
 
@@ -61,4 +63,42 @@ async def verify(
     """
 
     background_tasks.add_task(run_verification, req, settings)
+    return VerifyAccepted(cleanup_id=req.cleanup_id)
+
+
+class FixtureVerifyRequest(BaseModel):
+    """Body for ``POST /verify-fixture``.
+
+    The backend only needs to identify which cleanup record the verdict
+    belongs to -- the reference + submission videos are hardcoded fixtures
+    on the AI service side.
+    """
+
+    cleanup_id: str = Field(..., min_length=1)
+
+
+@app.post(
+    "/verify-fixture",
+    response_model=VerifyAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def verify_fixture(
+    req: FixtureVerifyRequest,
+    background_tasks: BackgroundTasks,
+    settings: Settings = Depends(get_settings),
+) -> VerifyAccepted:
+    """Run the Stage 2 fixture pipeline and post the verdict back.
+
+    GPS / scene-match / fraud signals are intentionally bypassed. The
+    boolean ``Stage2FinalVerdict.approved`` is the sole input to whether
+    the claimer is paid out: the callback to
+    ``BACKEND_BASE_URL/api/cleanups/{cleanup_id}/verification-result``
+    forwards it as ``verified``.
+    """
+
+    background_tasks.add_task(
+        run_fixture_verification,
+        req.cleanup_id,
+        settings=settings,
+    )
     return VerifyAccepted(cleanup_id=req.cleanup_id)

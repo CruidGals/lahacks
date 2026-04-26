@@ -18,8 +18,8 @@ from app.object_detection import summarize_video_objects_grounding_dino
 from app.pipelines.spec_pipeline import _sample_and_detect, extract_spec_candidates
 
 # Hardcoded local inputs for repeatable debug runs.
-REQUEST_VIDEO = Path("/Users/leolu/Desktop/VScode/lahacks/data/videos/fixtures/egRequest.MOV")
-SUBMISSION_VIDEO = Path("/Users/leolu/Desktop/VScode/lahacks/data/videos/fixtures/egUserPost.MOV")
+REQUEST_VIDEO = Path("/Users/kylechiem/Documents/lahacks/data/videos/fixtures/egRequest.MOV")
+SUBMISSION_VIDEO = Path("/Users/kylechiem/Documents/lahacks/data/videos/fixtures/egUserPost.MOV")
 
 # Keep these aligned with overlay cadence so Stage 1 + overlay are comparable.
 SAMPLE_EVERY_N_FRAMES = 120

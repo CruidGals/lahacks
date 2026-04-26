@@ -44,11 +44,6 @@ const bboxSchema = z.object({
   max_lng: z.coerce.number().min(-180).max(180).optional()
 });
 
-function bypassVerificationForTesting(): boolean {
-  const raw = process.env.BYPASS_VERIFICATION_FOR_TESTING?.trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
-
 bountyRouter.post('/', async (req, res) => {
   const user = await requireAuthUser(req, res);
   if (!user) return;
@@ -345,11 +340,6 @@ bountyRouter.post('/:id/claim', async (req, res) => {
   }
   if (!bounty) {
     res.status(404).json({ error: 'Bounty not found.' });
-    return;
-  }
-
-  if (!bypassVerificationForTesting() && bounty.poster_id === user.id) {
-    res.status(403).json({ error: 'You cannot claim a bounty that you posted.' });
     return;
   }
 

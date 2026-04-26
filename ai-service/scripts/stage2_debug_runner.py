@@ -25,8 +25,8 @@ from app.pipelines.spec_pipeline import (
 )
 from app.pipelines.submission_pipeline import run_stage2_pipeline
 
-REQUEST_VIDEO = Path("/Users/leolu/Desktop/VScode/lahacks/data/videos/fixtures/egRequest.MOV")
-SUBMISSION_VIDEO = Path("/Users/leolu/Desktop/VScode/lahacks/data/videos/fixtures/egUserPost.MOV")
+REQUEST_VIDEO = Path("/Users/kylechiem/Documents/lahacks/data/videos/fixtures/egRequest.MOV")
+SUBMISSION_VIDEO = Path("/Users/kylechiem/Documents/lahacks/data/videos/fixtures/egUserPost.MOV")
 
 SAMPLE_EVERY_N_FRAMES = 120
 MAX_SAMPLES = 100000

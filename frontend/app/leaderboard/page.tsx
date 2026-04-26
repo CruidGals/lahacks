@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "../_components/Card";
 import { Skeleton } from "../_components/Skeleton";
-import { FireIcon, TrophyIcon } from "../_components/icons";
+import { CoinIcon, FireIcon, TrophyIcon } from "../_components/icons";
 import { getCurrentUserId, getLeaderboard } from "../../lib/api";
 import type { LeaderboardEntry, Timeframe } from "../../lib/types";
 import { formatXp } from "../../lib/format";
@@ -14,9 +14,12 @@ const TIMEFRAMES: { id: Timeframe; label: string }[] = [
   { id: "all", label: "All time" },
 ];
 
+type LeaderboardMetric = "xp" | "sol";
+
 export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[] | null>(null);
   const [tf, setTf] = useState<Timeframe>("week");
+  const [metric, setMetric] = useState<LeaderboardMetric>("xp");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -28,8 +31,17 @@ export default function LeaderboardPage() {
     getLeaderboard(tf).then(setEntries).catch(() => setEntries([]));
   }, [tf]);
 
-  const top3 = entries?.slice(0, 3) ?? [];
-  const rest = entries?.slice(3) ?? [];
+  const ranked = entries
+    ? [...entries]
+        .sort((a, b) =>
+          metric === "xp"
+            ? b.total_xp - a.total_xp
+            : b.total_earned_sol - a.total_earned_sol
+        )
+        .map((entry, index) => ({ ...entry, rank: index + 1 }))
+    : [];
+  const top3 = ranked.slice(0, 3);
+  const rest = ranked.slice(3);
 
   return (
     <div className="flex-1 flex flex-col">
@@ -47,9 +59,32 @@ export default function LeaderboardPage() {
               Leaderboard
             </h1>
             <p className="text-xs text-[color:var(--color-muted)]">
-              Top cleaners by earned XP
+              Top cleaners by {metric === "xp" ? "earned XP" : "SOL earned"}
             </p>
           </div>
+        </div>
+
+        <div className="flex gap-1.5 mt-3 bg-[color:var(--color-surface)] rounded-full p-1">
+          <button
+            onClick={() => setMetric("xp")}
+            className={`flex-1 h-9 text-sm font-medium rounded-full transition-colors ${
+              metric === "xp"
+                ? "bg-white text-[color:var(--color-ink)] shadow-[var(--shadow-card)]"
+                : "text-[color:var(--color-muted)]"
+            }`}
+          >
+            Most XP
+          </button>
+          <button
+            onClick={() => setMetric("sol")}
+            className={`flex-1 h-9 text-sm font-medium rounded-full transition-colors ${
+              metric === "sol"
+                ? "bg-white text-[color:var(--color-ink)] shadow-[var(--shadow-card)]"
+                : "text-[color:var(--color-muted)]"
+            }`}
+          >
+            Most SOL
+          </button>
         </div>
 
         <div className="flex gap-1.5 mt-4 bg-[color:var(--color-surface)] rounded-full p-1">
@@ -79,9 +114,9 @@ export default function LeaderboardPage() {
           </div>
         ) : entries.length > 0 ? (
           <div className="grid grid-cols-3 gap-2 items-end">
-            <Podium entry={top3[1]} place={2} height="h-28" />
-            <Podium entry={top3[0]} place={1} height="h-36" />
-            <Podium entry={top3[2]} place={3} height="h-24" />
+            <Podium entry={top3[1]} metric={metric} place={2} height="h-28" />
+            <Podium entry={top3[0]} metric={metric} place={1} height="h-36" />
+            <Podium entry={top3[2]} metric={metric} place={3} height="h-24" />
           </div>
         ) : null}
       </div>
@@ -143,8 +178,17 @@ export default function LeaderboardPage() {
                   </p>
                 </div>
                 <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
-                  <FireIcon width={14} height={14} />
-                  {formatXp(e.total_xp)}
+                  {metric === "xp" ? (
+                    <>
+                      <FireIcon width={14} height={14} />
+                      {formatXp(e.total_xp)}
+                    </>
+                  ) : (
+                    <>
+                      <CoinIcon width={14} height={14} />
+                      {e.total_earned_sol.toFixed(2)} SOL
+                    </>
+                  )}
                 </span>
               </Card>
             );
@@ -156,10 +200,12 @@ export default function LeaderboardPage() {
 
 function Podium({
   entry,
+  metric,
   place,
   height,
 }: {
   entry: LeaderboardEntry | undefined;
+  metric: LeaderboardMetric;
   place: 1 | 2 | 3;
   height: string;
 }) {
@@ -182,7 +228,9 @@ function Podium({
         @{entry.handle}
       </p>
       <p className="text-[11px] tabular text-[color:var(--color-brand-600)] font-bold">
-        {formatXp(entry.total_xp)}
+        {metric === "xp"
+          ? formatXp(entry.total_xp)
+          : `${entry.total_earned_sol.toFixed(2)} SOL`}
       </p>
       <div
         className={`mt-2 w-full rounded-t-[14px] flex items-end justify-center pb-2 ${height}`}
