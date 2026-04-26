@@ -147,6 +147,7 @@ async def check_task_complete(
         if "fail-task" in sub_path.name.lower():
             return TaskCompleteResult(
                 task_complete=False,
+                artifact_removed=False,
                 items=[TaskCompleteItem(description="forced_fail_task_flag", still_present=True)],
                 confidence=0.2,
             )
@@ -176,6 +177,7 @@ async def check_task_complete(
             # degrade gracefully instead of crashing pipeline execution.
             return TaskCompleteResult(
                 task_complete=True,
+                artifact_removed=True,
                 items=[
                     TaskCompleteItem(
                         description=f"video_unreadable_or_unavailable; detection_skipped backend={detector_backend}",
@@ -230,6 +232,7 @@ async def check_task_complete(
 
         return TaskCompleteResult(
             task_complete=not still_present_any,
+            artifact_removed=not still_present_any,
             items=items,
             confidence=round(confidence, 2),
         )

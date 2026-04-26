@@ -6,6 +6,7 @@ import { bountyRouter } from './routes/bounties.js';
 import { sessionRouter } from './routes/sessions.js';
 import { cleanupRouter } from './routes/cleanups.js';
 import { usersRouter } from './routes/users.js';
+import { leaderboardRouter } from './routes/leaderboard.js';
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use('/api/bounties', bountyRouter);
 app.use('/api/sessions', sessionRouter);
 app.use('/api/cleanups', cleanupRouter);
 app.use('/api/users', usersRouter);
+app.use('/api/leaderboard', leaderboardRouter);
 
 const port = Number(process.env.PORT ?? 8080);
 app.listen(port, () => {
