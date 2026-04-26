@@ -7,8 +7,6 @@ JSON schema FastAPI serves under ``/docs`` matches the in-process types.
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
@@ -25,9 +23,9 @@ from app.pipelines.spec_pipeline import (
     build_ground_truth_spec,
     extract_spec_candidates,
 )
+from app.pipelines.submission_pipeline import Stage2Result, run_stage2_pipeline
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
-logger = logging.getLogger(__name__)
 
 
 # --- Request models ------------------------------------------------------- #
@@ -64,6 +62,17 @@ class SpecCandidatesRequest(BaseModel):
     """
 
     video_url: str
+
+
+class Stage2Request(BaseModel):
+    """Body for ``POST /pipelines/submission/verify``.
+
+    Stage 2 entry point. The submission video is analysed against the
+    confirmed :class:`GroundTruthSpec` to produce a :class:`Stage2Result`.
+    """
+
+    submission_video_url: str
+    spec: GroundTruthSpec
 
 
 # --- Endpoints ------------------------------------------------------------ #
@@ -160,3 +169,37 @@ async def run_spec_confirm(
     """
 
     return build_ground_truth_spec(body)
+
+
+# --- Stage 2 (submission time) ----------------------------------------- #
+
+
+@router.post(
+    "/submission/verify",
+    response_model=Stage2Result,
+    status_code=status.HTTP_200_OK,
+    summary="Stage 2: submission video + spec -> object grouping + LLM validation + matching",
+)
+async def run_submission_verify(
+    body: Stage2Request,
+    settings: Settings = Depends(get_settings),
+) -> Stage2Result:
+    """Run the Stage 2 pipeline: DINO detection on the submission video with
+    the spec-derived prompt, IoU object tracking, per-object crop extraction,
+    LLM validation, and greedy matching against spec items.
+    """
+
+    try:
+        return await run_stage2_pipeline(
+            body.submission_video_url,
+            body.spec,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LLMConfigError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LLMResponseError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

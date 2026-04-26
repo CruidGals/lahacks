@@ -61,6 +61,24 @@ class Settings(BaseSettings):
     grounding_dino_box_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
     grounding_dino_text_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
 
+    openai_api_key: str | None = Field(
+        default=None,
+        description="API key for OpenAI vision validation.",
+    )
+    openai_model: str = Field(
+        default="gpt-5.4-mini",
+        description="OpenAI model used for pipeline JSON vision calls.",
+    )
+    openai_max_tokens: int = Field(
+        default=2000,
+        ge=1,
+        description="Max output tokens for OpenAI chat completions.",
+    )
+    pipeline_use_stub: bool = Field(
+        default=False,
+        description="When true, pipelines use deterministic stub responses.",
+    )
+
     log_level: str = Field(default="INFO")
 
 

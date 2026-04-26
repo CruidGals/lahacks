@@ -97,7 +97,7 @@ class OpenAIPipelineClient:
 
         stub_mode = self._setting("pipeline_use_stub", None)
         api_key = self._setting("openai_api_key", None)
-        if stub_mode is True or (stub_mode is None and not api_key):
+        if stub_mode is True:
             stub = stub_factory()
             logger.info(
                 "pipeline_stub_used model=%s schema=%s",

@@ -7,7 +7,13 @@ Stage 1 (no LLM, posting time):
   requester reviews + corrects, and ``build_ground_truth_spec`` converts the
   edits into a :class:`GroundTruthSpec` persisted on the bounty.
 
-Stage 2 (LLM-assisted, submission time):
+Stage 2 (submission time):
+
+* ``submission_pipeline`` -- runs DINO with the spec-derived prompt on the
+  submission video, IoU-tracks into unique objects, crops evidence per object,
+  validates each via LLM, and matches validated objects back to the spec.
+
+Legacy (pre-Stage-2):
 
 * ``cleanup_pipeline``  -- Person B. Compares a reference video to the
   cleaner's submission video plus DINO outputs and produces a
@@ -33,6 +39,15 @@ from app.pipelines.spec_pipeline import (
     build_ground_truth_spec,
     extract_spec_candidates,
 )
+from app.pipelines.submission_pipeline import (
+    LLMObjectVerdict,
+    ObjectCrop,
+    SpecMatchResult,
+    Stage2FinalVerdict,
+    Stage2Result,
+    SubmissionObject,
+    run_stage2_pipeline,
+)
 
 __all__ = [
     "Bbox",
@@ -43,16 +58,23 @@ __all__ = [
     "FrameDetections",
     "GroundTruthSpec",
     "ItemResolution",
+    "LLMObjectVerdict",
     "ManualSpecItemDraft",
+    "ObjectCrop",
     "SpecBbox",
     "SpecCandidate",
     "SpecCandidateSet",
     "SpecConfirmRequest",
     "SpecItem",
+    "SpecMatchResult",
     "SpecPreviewFrame",
+    "Stage2FinalVerdict",
+    "Stage2Result",
+    "SubmissionObject",
     "build_dino_output_from_video",
     "build_ground_truth_spec",
     "extract_spec_candidates",
     "run_cleanup_pipeline",
     "run_disposal_pipeline",
+    "run_stage2_pipeline",
 ]
