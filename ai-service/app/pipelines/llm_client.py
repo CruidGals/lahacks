@@ -154,9 +154,9 @@ class OpenAIPipelineClient:
             )
 
         # Newer OpenAI models (gpt-5.x, o1+, etc.) require ``max_completion_tokens``
-        # while older models (gpt-4o, gpt-4o-mini) still accept ``max_tokens``.
-        # We try the new param first and transparently fall back on the legacy
-        # error so the same code works across model versions.
+        # while older models may still expect ``max_tokens``. We send
+        # ``max_completion_tokens`` via ``extra_body`` first so this works even
+        # when the installed openai-python stub doesn't expose that keyword.
         common_kwargs = dict(
             model=self._settings.openai_model,
             response_format={"type": "json_object"},
@@ -167,20 +167,25 @@ class OpenAIPipelineClient:
         )
         try:
             response = await client.chat.completions.create(
-                max_completion_tokens=self._settings.openai_max_tokens,
+                extra_body={"max_completion_tokens": self._settings.openai_max_tokens},
                 **common_kwargs,
             )
         except TypeError:
-            # Older openai-python builds that don't know about the new kwarg.
+            # Defensive fallback for very old SDKs that don't accept extra_body.
             response = await client.chat.completions.create(
                 max_tokens=self._settings.openai_max_tokens,
                 **common_kwargs,
             )
         except Exception as exc:
             message = str(exc).lower()
-            if "max_completion_tokens" in message or "max_tokens" in message:
+            if "max_completion_tokens" in message:
                 response = await client.chat.completions.create(
                     max_tokens=self._settings.openai_max_tokens,
+                    **common_kwargs,
+                )
+            elif "unsupported parameter" in message and "max_tokens" in message:
+                response = await client.chat.completions.create(
+                    extra_body={"max_completion_tokens": self._settings.openai_max_tokens},
                     **common_kwargs,
                 )
             else:

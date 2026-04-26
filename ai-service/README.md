@@ -56,6 +56,42 @@ curl -X POST http://localhost:8000/verify \
 pytest -q
 ```
 
+## Stage 1: posting-time spec extraction
+
+`POST /pipelines/spec/candidates` runs broad-prompt Grounding DINO + an IoU
+tracker on the requester's reference video and returns a list of unique
+*candidate* objects (label, peak bbox, peak confidence, hit count) plus
+preview frames with numbered overlay boxes burned in.
+
+```bash
+curl -X POST http://localhost:8000/pipelines/spec/candidates \
+  -H "Content-Type: application/json" \
+  -d '{ "video_url": "https://example.com/reference.mp4" }'
+```
+
+The requester reviews the candidates in the UI:
+
+* Tap a numbered box -> add its `candidate_id` to `removed_candidate_ids`.
+* Tap an empty area -> append a `manual_items` entry (rough box + label).
+
+`POST /pipelines/spec/confirm` then materializes the final
+`GroundTruthSpec` (one entry per confirmed item, even if labels repeat) and
+returns the deduped `categories` list — that's the prompt Stage 2 hands to
+Grounding DINO at submission time. After this call the reference video is no
+longer needed.
+
+```bash
+PYTHONPATH=. python3 scripts/spec_demo.py ../data/videos/fixtures/egRequest.MOV
+```
+
+The demo writes a timestamped `artifacts/spec-runs/<ts>/` folder with
+`candidates.json`, the raw + annotated preview JPEGs, and a
+`ground_truth.json` that approves every candidate (handy smoke test).
+
+Tunables (see `app/config.py`): `SPEC_BROAD_PROMPT`,
+`SPEC_SAMPLE_EVERY_N_FRAMES`, `SPEC_MAX_SAMPLES`, `SPEC_PREVIEW_FRAMES`,
+`SPEC_IOU_THRESHOLD`, `SPEC_MIN_TRACK_HITS`.
+
 ## Object detection demo (with boxes)
 
 Run a quick detection pass on a local video and generate an annotated preview:
