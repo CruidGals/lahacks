@@ -1,12 +1,44 @@
+import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { Keypair } from '@solana/web3.js';
 import { signRequest } from '@worldcoin/idkit-core/signing';
+import type { MiniAppWalletAuthSuccessPayload } from '@worldcoin/minikit-js/commands';
+import { verifySiweMessage } from '@worldcoin/minikit-js/siwe';
+import { isAddress } from 'viem';
 import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser } from '../lib/auth.js';
-import { rewardLamportsToSol } from '../lib/bounties.js';
+import { rewardLamportsToSol, rewardMicroToWld } from '../lib/bounties.js';
 
 export const usersRouter = Router();
+
+const WALLET_NONCE_TTL_MS = 5 * 60 * 1000;
+const WALLET_NONCES = new Map<string, { user_id: string; expires_at: number }>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [nonce, entry] of WALLET_NONCES) {
+    if (entry.expires_at <= now) WALLET_NONCES.delete(nonce);
+  }
+}, 60_000).unref?.();
+
+function mintWalletNonce(userId: string): string {
+  // MiniKit requires alphanumeric nonces with no hyphens.
+  const nonce = randomBytes(24).toString('hex');
+  WALLET_NONCES.set(nonce, {
+    user_id: userId,
+    expires_at: Date.now() + WALLET_NONCE_TTL_MS
+  });
+  return nonce;
+}
+
+function consumeWalletNonce(nonce: string, userId: string): boolean {
+  const entry = WALLET_NONCES.get(nonce);
+  if (!entry) return false;
+  WALLET_NONCES.delete(nonce);
+  if (entry.expires_at <= Date.now()) return false;
+  return entry.user_id === userId;
+}
 
 const createUserSchema = z.object({
   id: z.string().uuid().optional(),
@@ -23,6 +55,17 @@ const verifyWorldIdSchema = z.object({
 
 const createRpContextSchema = z.object({
   action: z.string().min(1).max(128).optional()
+});
+
+const completeSiweSchema = z.object({
+  nonce: z.string().min(8).max(128),
+  payload: z.object({
+    status: z.literal('success'),
+    message: z.string().min(1),
+    signature: z.string().min(1),
+    address: z.string().min(1),
+    version: z.number().optional()
+  })
 });
 
 type VerifyV4Response = {
@@ -150,7 +193,7 @@ usersRouter.get('/me', async (req, res) => {
   // Bounties this user has completed (claimed by them, status=completed)
   const { data: completedBounties, error: completedError } = await supabase
     .from('bounties')
-    .select('id, description, reward_lamports, claimed_at')
+    .select('id, description, reward_currency, reward_lamports, claimed_at')
     .eq('claimer_id', user.id)
     .eq('status', 'completed')
     .order('claimed_at', { ascending: false });
@@ -161,17 +204,30 @@ usersRouter.get('/me', async (req, res) => {
   }
 
   const completed = completedBounties ?? [];
-  const totalEarnedSol = completed.reduce(
-    (sum, bounty) => sum + rewardLamportsToSol(bounty.reward_lamports),
-    0
-  );
+  let totalEarnedWld = 0;
+  let totalEarnedSol = 0;
+  for (const bounty of completed) {
+    if (bounty.reward_currency === 'SOL') {
+      totalEarnedSol += rewardLamportsToSol(bounty.reward_lamports);
+    } else {
+      totalEarnedWld += rewardMicroToWld(bounty.reward_lamports);
+    }
+  }
 
-  const recent = completed.slice(0, 8).map((bounty) => ({
-    bounty_id: bounty.id,
-    title: deriveTitle(bounty.description),
-    reward_sol: rewardLamportsToSol(bounty.reward_lamports),
-    completed_at: bounty.claimed_at ?? new Date().toISOString()
-  }));
+  const recent = completed.slice(0, 8).map((bounty) => {
+    const isSol = bounty.reward_currency === 'SOL';
+    const human = isSol
+      ? rewardLamportsToSol(bounty.reward_lamports)
+      : rewardMicroToWld(bounty.reward_lamports);
+    return {
+      bounty_id: bounty.id,
+      title: deriveTitle(bounty.description),
+      reward_currency: isSol ? 'SOL' : 'WLD',
+      reward: human,
+      ...(isSol ? { reward_sol: human } : { reward_wld: human }),
+      completed_at: bounty.claimed_at ?? new Date().toISOString()
+    };
+  });
 
   // Streak placeholder — count active days within the last week
   const lastWeek = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -186,11 +242,14 @@ usersRouter.get('/me', async (req, res) => {
   res.json({
     user: {
       ...user,
+      total_earned_wld: Number(totalEarnedWld.toFixed(4)),
       total_earned_sol: Number(totalEarnedSol.toFixed(4)),
       total_completed: completed.length,
       current_streak: activeDays.size,
       wallet: {
         address: user.wallet_address,
+        world_address: user.world_address,
+        balance_wld: Number(totalEarnedWld.toFixed(4)),
         balance_sol: Number(totalEarnedSol.toFixed(4))
       },
       recent_completed: recent
@@ -305,4 +364,90 @@ usersRouter.post('/verify', async (req, res) => {
   }
 
   res.json({ ok: true, user: updated });
+});
+
+/**
+ * MiniKit `walletAuth` (Sign-In with Ethereum) — phase 1.
+ *
+ * Returns a one-shot alphanumeric nonce bound to the calling user. The client
+ * should immediately pass it to `MiniKit.walletAuth({ nonce })` and forward
+ * the resulting payload back to `/wallet/complete` for verification.
+ */
+usersRouter.post('/wallet/nonce', async (req, res) => {
+  const user = await requireAuthUser(req, res);
+  if (!user) return;
+
+  const nonce = mintWalletNonce(user.id);
+  res.json({ nonce, expires_in_ms: WALLET_NONCE_TTL_MS });
+});
+
+/**
+ * MiniKit `walletAuth` — phase 2.
+ *
+ * Verifies the SIWE signature against the nonce we minted, and on success
+ * persists the verified Ethereum address as the user's `world_address`. The
+ * legacy Solana `wallet_address` is left untouched so the user can continue
+ * to receive SOL bounties to their auto-generated keypair.
+ * `verifySiweMessage` from MiniKit handles both Smart Accounts (EIP-1271) and
+ * EOAs (ECDSA).
+ */
+usersRouter.post('/wallet/complete', async (req, res) => {
+  const user = await requireAuthUser(req, res);
+  if (!user) return;
+
+  if (!supabase) {
+    res.status(500).json({ error: 'Supabase is not configured.' });
+    return;
+  }
+
+  const parsed = completeSiweSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  if (!consumeWalletNonce(parsed.data.nonce, user.id)) {
+    res.status(400).json({ error: 'Invalid or expired wallet auth nonce.' });
+    return;
+  }
+
+  const payload = parsed.data.payload as MiniAppWalletAuthSuccessPayload;
+
+  let verification;
+  try {
+    verification = await verifySiweMessage(payload, parsed.data.nonce);
+  } catch (err) {
+    res.status(400).json({
+      error: 'SIWE verification failed.',
+      details: err instanceof Error ? err.message : null
+    });
+    return;
+  }
+
+  if (!verification.isValid) {
+    res.status(400).json({ error: 'SIWE signature did not validate.' });
+    return;
+  }
+
+  const address = verification.siweMessageData.address;
+  if (!address || !isAddress(address)) {
+    res.status(400).json({ error: 'SIWE returned an invalid address.' });
+    return;
+  }
+
+  // We trust the address coming from `verifySiweMessage`, not the client-sent
+  // `payload.address`. They should match but we use the verified one.
+  const { data: updated, error } = await supabase
+    .from('users')
+    .update({ world_address: address })
+    .eq('id', user.id)
+    .select('*')
+    .single();
+
+  if (error || !updated) {
+    res.status(500).json({ error: 'Failed to persist world address.' });
+    return;
+  }
+
+  res.json({ ok: true, user: updated, world_address: address });
 });

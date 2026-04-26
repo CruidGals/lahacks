@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
-import { refundEscrowToPoster, releaseBountyToClaimer } from '../lib/solana.js';
 import { analyzeTrajectory } from '../lib/trajectory.js';
+import {
+  releaseBountyToClaimer,
+  refundEscrowToPoster
+} from '../lib/solana.js';
+import { transferWldFromVault, WldConfigError, WldOnchainError } from '../lib/wld.js';
 
 export const cleanupRouter = Router();
 
@@ -367,21 +371,43 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       return;
     }
 
+    const currency = bounty.reward_currency ?? 'WLD';
     let payoutTxSig: string;
     try {
-      payoutTxSig = await releaseBountyToClaimer({
-        bountyId: bounty.id,
-        recipientWallet: claimer.wallet_address,
-        cleanupId: cleanup.id,
-        rewardLamports: bounty.reward_lamports
-      });
+      if (currency === 'SOL') {
+        if (!claimer.wallet_address) {
+          throw new Error('Claimer has no Solana wallet_address.');
+        }
+        payoutTxSig = await releaseBountyToClaimer({
+          bountyId: bounty.id,
+          recipientWallet: claimer.wallet_address,
+          cleanupId: cleanup.id,
+          rewardLamports: bounty.reward_lamports
+        });
+      } else {
+        if (!claimer.world_address) {
+          throw new WldOnchainError(
+            'Claimer has no linked world_address; complete `walletAuth` first.'
+          );
+        }
+        const transfer = await transferWldFromVault({
+          recipient: claimer.world_address,
+          microWld: bounty.reward_lamports,
+          bountyId: bounty.id,
+          cleanupId: cleanup.id,
+          kind: 'payout'
+        });
+        payoutTxSig = transfer.txHash;
+      }
     } catch (e) {
+      const isConfig = e instanceof WldConfigError;
+      const isChain = e instanceof WldOnchainError;
       console.warn(
-        'On-chain payout failed; using simulated payout signature for demo:',
+        `${currency} payout failed (${isConfig ? 'config' : isChain ? 'onchain' : 'unknown'}); using simulated payout signature for demo:`,
         e instanceof Error ? e.message : e
       );
-      // Demo fallback: don't block the verification flow if devnet vault is empty.
-      payoutTxSig = `simulated_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+      // Demo fallback: don't block the verification flow if vault is empty/unset.
+      payoutTxSig = `simulated_${currency.toLowerCase()}_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
     }
 
     const [cleanupUpdate, bountyUpdate, sessionUpdate] = await Promise.all([
@@ -462,20 +488,42 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
+  const refundCurrency = bounty.reward_currency ?? 'WLD';
   let refundTxSig: string;
   try {
-    refundTxSig = await refundEscrowToPoster({
-      bountyId: bounty.id,
-      posterWallet: poster.wallet_address,
-      cleanupId: cleanup.id,
-      rewardLamports: bounty.reward_lamports
-    });
+    if (refundCurrency === 'SOL') {
+      if (!poster.wallet_address) {
+        throw new Error('Poster has no Solana wallet_address; cannot refund.');
+      }
+      refundTxSig = await refundEscrowToPoster({
+        bountyId: bounty.id,
+        posterWallet: poster.wallet_address,
+        cleanupId: cleanup.id,
+        rewardLamports: bounty.reward_lamports
+      });
+    } else {
+      if (!poster.world_address) {
+        throw new WldOnchainError(
+          'Poster has no linked world_address; cannot refund WLD.'
+        );
+      }
+      const transfer = await transferWldFromVault({
+        recipient: poster.world_address,
+        microWld: bounty.reward_lamports,
+        bountyId: bounty.id,
+        cleanupId: cleanup.id,
+        kind: 'refund'
+      });
+      refundTxSig = transfer.txHash;
+    }
   } catch (e) {
+    const isConfig = e instanceof WldConfigError;
+    const isChain = e instanceof WldOnchainError;
     console.warn(
-      'Refund transaction failed; using simulated refund signature for demo:',
+      `${refundCurrency} refund failed (${isConfig ? 'config' : isChain ? 'onchain' : 'unknown'}); using simulated refund signature for demo:`,
       e instanceof Error ? e.message : e
     );
-    refundTxSig = `simulated_refund_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+    refundTxSig = `simulated_refund_${refundCurrency.toLowerCase()}_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
   }
 
   const verificationWithRefund = {
