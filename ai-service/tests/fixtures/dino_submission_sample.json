@@ -1,0 +1,32 @@
+{
+  "video_url": "https://example.com/after-cleanup.mp4",
+  "duration_s": 11.8,
+  "width": 1280,
+  "height": 720,
+  "frames": [
+    {
+      "timestamp_s": 0.0,
+      "frame_index": 0,
+      "detections": [
+        {
+          "label": "plastic_bottle",
+          "confidence": 0.71,
+          "bbox": {"x": 540, "y": 412, "w": 60, "h": 130}
+        }
+      ]
+    },
+    {
+      "timestamp_s": 6.0,
+      "frame_index": 2,
+      "detections": []
+    },
+    {
+      "timestamp_s": 11.5,
+      "frame_index": 4,
+      "detections": []
+    }
+  ],
+  "summary": {
+    "plastic_bottle": 1
+  }
+}

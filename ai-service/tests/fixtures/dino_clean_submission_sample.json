@@ -1,0 +1,24 @@
+{
+  "video_url": "https://example.com/after-cleanup-clean.mp4",
+  "duration_s": 11.0,
+  "width": 1280,
+  "height": 720,
+  "frames": [
+    {
+      "timestamp_s": 0.0,
+      "frame_index": 0,
+      "detections": []
+    },
+    {
+      "timestamp_s": 5.5,
+      "frame_index": 2,
+      "detections": []
+    },
+    {
+      "timestamp_s": 11.0,
+      "frame_index": 4,
+      "detections": []
+    }
+  ],
+  "summary": {}
+}

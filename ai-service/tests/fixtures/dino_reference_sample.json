@@ -1,0 +1,76 @@
+{
+  "video_url": "https://example.com/before-cleanup.mp4",
+  "duration_s": 12.5,
+  "width": 1280,
+  "height": 720,
+  "frames": [
+    {
+      "timestamp_s": 0.0,
+      "frame_index": 0,
+      "detections": [
+        {
+          "label": "plastic_bottle",
+          "confidence": 0.93,
+          "bbox": {"x": 540, "y": 410, "w": 60, "h": 130}
+        },
+        {
+          "label": "plastic_bottle",
+          "confidence": 0.88,
+          "bbox": {"x": 720, "y": 460, "w": 55, "h": 120}
+        },
+        {
+          "label": "cardboard_box",
+          "confidence": 0.81,
+          "bbox": {"x": 200, "y": 420, "w": 220, "h": 180}
+        }
+      ]
+    },
+    {
+      "timestamp_s": 6.0,
+      "frame_index": 2,
+      "detections": [
+        {
+          "label": "plastic_bottle",
+          "confidence": 0.91,
+          "bbox": {"x": 540, "y": 412, "w": 60, "h": 130}
+        },
+        {
+          "label": "plastic_bottle",
+          "confidence": 0.86,
+          "bbox": {"x": 720, "y": 458, "w": 55, "h": 120}
+        },
+        {
+          "label": "plastic_bag",
+          "confidence": 0.74,
+          "bbox": {"x": 880, "y": 520, "w": 140, "h": 90}
+        },
+        {
+          "label": "cardboard_box",
+          "confidence": 0.83,
+          "bbox": {"x": 200, "y": 420, "w": 220, "h": 180}
+        }
+      ]
+    },
+    {
+      "timestamp_s": 12.0,
+      "frame_index": 4,
+      "detections": [
+        {
+          "label": "plastic_bottle",
+          "confidence": 0.90,
+          "bbox": {"x": 542, "y": 412, "w": 60, "h": 130}
+        },
+        {
+          "label": "plastic_bag",
+          "confidence": 0.78,
+          "bbox": {"x": 875, "y": 525, "w": 145, "h": 95}
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "plastic_bottle": 5,
+    "cardboard_box": 2,
+    "plastic_bag": 2
+  }
+}

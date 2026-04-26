@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, Depends, FastAPI, status
 
+from app.api.routes import router as pipelines_router
 from app.config import Settings, get_settings
 from app.models import VerifyAccepted, VerifyRequest
 from app.verify_pipeline import run_verification
@@ -28,10 +29,13 @@ app = FastAPI(
     description=(
         "Person 3B service. Receives /verify requests from the Node backend, "
         "runs Person 3A vision checks + fraud aggregation, scores the result, "
-        "and POSTs back to /cleanups/:id/verification-result."
+        "and POSTs back to /cleanups/:id/verification-result. Also exposes "
+        "three standalone /pipelines/* endpoints for OpenAI vision experiments."
     ),
     lifespan=lifespan,
 )
+
+app.include_router(pipelines_router)
 
 
 @app.get("/health")
