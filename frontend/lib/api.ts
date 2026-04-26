@@ -85,6 +85,19 @@ type BackendLeaderboardItem = {
   wallet_address: string;
 };
 
+type WorldRpContextResponse = {
+  app_id: `app_${string}`;
+  action: string;
+  environment: "production" | "staging";
+  rp_context: {
+    rp_id: `rp_${string}`;
+    nonce: string;
+    created_at: number;
+    expires_at: number;
+    signature: string;
+  };
+};
+
 // ---------- Local session cache ----------
 //
 // The backend never exposes a "GET /sessions/:id" endpoint, so we cache
@@ -531,6 +544,25 @@ export async function verifyWorldId(): Promise<{ verified: true }> {
   });
   setCachedUser(json.user);
   return { verified: true };
+}
+
+export async function verifyWorldIdWithProof(input: {
+  rp_id: string;
+  idkit_response: Record<string, unknown>;
+}): Promise<{ verified: true }> {
+  const json = await api<{ ok: boolean; user: ApiUser }>("/api/users/verify", {
+    method: "POST",
+    body: input,
+  });
+  setCachedUser(json.user);
+  return { verified: true };
+}
+
+export async function createWorldIdRpContext(action?: string): Promise<WorldRpContextResponse> {
+  return api<WorldRpContextResponse>("/api/users/world/rp-context", {
+    method: "POST",
+    body: action ? { action } : {},
+  });
 }
 
 export function getWorldIdStatus(): boolean {

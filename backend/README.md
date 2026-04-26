@@ -9,6 +9,14 @@ Required:
 - `SUPABASE_URL` (must be a valid `https://...` project URL)
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+World ID / IDKit:
+
+- `WORLD_ID_APP_ID` (World app id, e.g. `app_...`)
+- `WORLD_RP_ID` (World RP id, e.g. `rp_...`)
+- `WORLD_RP_SIGNING_KEY` (hex signing key from World developer portal; keep secret)
+- `WORLD_ID_ENVIRONMENT` (`staging` or `production`, defaults to `staging`)
+- `WORLD_DEVELOPER_API_KEY` (optional bearer token for `developer.world.org` verify calls)
+
 Solana (devnet demo):
 
 - `SOLANA_RPC_URL` (optional, defaults to Solana devnet)
@@ -28,7 +36,7 @@ Protected routes accept either:
 - `Authorization: Bearer <Supabase access JWT>` — user id is taken from the validated JWT and matched to `public.users.id`, or
 - `Authorization: Bearer <user uuid>` / `x-user-id: <user uuid>` — legacy dev flow (use only in trusted environments).
 
-World ID: clients call `POST /api/users/verify` with `{ "world_id_hash": "..." }` after IDKit/MiniKit proof; the backend sets `users.verified = true`. Posting bounties, claiming, starting sessions, pinging, and submitting cleanups require `verified`.
+World ID: clients first call `POST /api/users/world/rp-context` to fetch RP context, then submit IDKit result to `POST /api/users/verify` as `{ "rp_id": "...", "idkit_response": {...} }`. The backend verifies against World Developer Portal and sets `users.verified = true`. Posting bounties, claiming, starting sessions, pinging, and submitting cleanups require `verified`.
 
 ## Public map listing
 
