@@ -8,9 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 from app.object_detection import (
-    annotate_video,
+    annotate_video_grounding_dino,
     most_common_labels,
-    summarize_video_objects,
     summarize_video_objects_grounding_dino,
 )
 
@@ -32,12 +31,6 @@ def main() -> None:
         help="Output annotated video file path",
     )
     parser.add_argument(
-        "--backend",
-        choices=["opencv", "grounding_dino"],
-        default="opencv",
-        help="Detector backend to use for summaries",
-    )
-    parser.add_argument(
         "--query",
         type=str,
         default="trash . litter . garbage . bottle . can . bag",
@@ -46,13 +39,12 @@ def main() -> None:
     args = parser.parse_args()
     run_dir, resolved_output = _timestamped_output_path(args.output)
 
-    if args.backend == "grounding_dino":
-        summary = asyncio.run(
-            summarize_video_objects_grounding_dino(args.video_path, query=args.query)
-        )
-    else:
-        summary = summarize_video_objects(args.video_path)
-    output = annotate_video(args.video_path, resolved_output)
+    summary = asyncio.run(
+        summarize_video_objects_grounding_dino(args.video_path, query=args.query)
+    )
+    output = asyncio.run(
+        annotate_video_grounding_dino(args.video_path, resolved_output, query=args.query)
+    )
 
     print(f"output_dir={run_dir.resolve()}")
     print(f"frames_sampled={summary.frames_sampled}")

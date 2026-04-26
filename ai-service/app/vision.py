@@ -22,7 +22,6 @@ fraud signal is silently skipped (we never raise a false flag on missing data).
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TypeAlias
@@ -32,7 +31,7 @@ import httpx
 
 from app.config import get_settings
 from app.models import SceneMatchResult, TaskCompleteItem, TaskCompleteResult
-from app.object_detection import summarize_video_objects, summarize_video_objects_grounding_dino
+from app.object_detection import summarize_video_objects_grounding_dino
 
 VideoInput: TypeAlias = bytes | Path | str
 TRASH_LIKE_LABELS = {
@@ -133,14 +132,13 @@ async def check_task_complete(
     """Detect objects in videos and estimate cleanup completeness.
 
     Accepts bytes, local file paths, or URLs. Internally normalizes all inputs
-    to local files, then runs OpenCV object detection on sampled frames.
+    to local files, then runs Grounding DINO on sampled frames.
     """
 
     ref_path, cleanup_ref = await _normalize_to_file(reference_video)
     sub_path, cleanup_sub = await _normalize_to_file(submission_video)
     try:
         settings = get_settings()
-        detector_backend = settings.vision_detector_backend.lower().strip()
         effective_query = (target_query or settings.cleanup_target_query).strip()
 
         # Explicit failure mode for automated tests and sandbox demos.
@@ -153,25 +151,21 @@ async def check_task_complete(
             )
 
         try:
-            if detector_backend == "grounding_dino":
-                # Run sequentially to avoid free-tier Replicate burst throttling.
-                ref_summary = await summarize_video_objects_grounding_dino(
-                    ref_path,
-                    query=effective_query,
-                    model=settings.grounding_dino_model,
-                    box_threshold=settings.grounding_dino_box_threshold,
-                    text_threshold=settings.grounding_dino_text_threshold,
-                )
-                sub_summary = await summarize_video_objects_grounding_dino(
-                    sub_path,
-                    query=effective_query,
-                    model=settings.grounding_dino_model,
-                    box_threshold=settings.grounding_dino_box_threshold,
-                    text_threshold=settings.grounding_dino_text_threshold,
-                )
-            else:
-                ref_summary = await asyncio.to_thread(summarize_video_objects, ref_path)
-                sub_summary = await asyncio.to_thread(summarize_video_objects, sub_path)
+            # Run sequentially to avoid free-tier Replicate burst throttling.
+            ref_summary = await summarize_video_objects_grounding_dino(
+                ref_path,
+                query=effective_query,
+                model=settings.grounding_dino_model,
+                box_threshold=settings.grounding_dino_box_threshold,
+                text_threshold=settings.grounding_dino_text_threshold,
+            )
+            sub_summary = await summarize_video_objects_grounding_dino(
+                sub_path,
+                query=effective_query,
+                model=settings.grounding_dino_model,
+                box_threshold=settings.grounding_dino_box_threshold,
+                text_threshold=settings.grounding_dino_text_threshold,
+            )
         except Exception:
             # For invalid/unavailable videos in tests or remote placeholders,
             # degrade gracefully instead of crashing pipeline execution.
@@ -180,7 +174,7 @@ async def check_task_complete(
                 artifact_removed=True,
                 items=[
                     TaskCompleteItem(
-                        description=f"video_unreadable_or_unavailable; detection_skipped backend={detector_backend}",
+                        description="video_unreadable_or_unavailable; detection_skipped backend=grounding_dino",
                         still_present=False,
                     )
                 ],

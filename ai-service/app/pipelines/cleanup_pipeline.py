@@ -272,9 +272,11 @@ async def run_cleanup_pipeline(
 
     settings = settings or get_settings()
     client = client or OpenAIPipelineClient(settings)
+    pipeline_use_stub = getattr(settings, "pipeline_use_stub", False)
+    pipeline_frames = getattr(settings, "pipeline_frames_per_video", 5)
 
     # 1) DINO on each video, INDEPENDENTLY.
-    if not settings.pipeline_use_stub:
+    if not pipeline_use_stub:
         if reference_dino is None:
             reference_dino = await build_dino_output_from_video(
                 reference_video, settings=settings
@@ -294,7 +296,7 @@ async def run_cleanup_pipeline(
             client=client,
         )
 
-    if settings.pipeline_use_stub:
+    if pipeline_use_stub:
         # Stub mode is offline -- fall back to empty DINO so the heuristic still runs.
         empty = DinoOutput(
             video_url="<stub>",
@@ -311,10 +313,10 @@ async def run_cleanup_pipeline(
 
     # 3) Comparison LLM call. Sees both videos + both DINOs + both specs.
     ref_frames_raw = await extract_frames(
-        reference_video, frames_per_video=settings.pipeline_frames_per_video
+        reference_video, frames_per_video=pipeline_frames
     )
     sub_frames_raw = await extract_frames(
-        submission_video, frames_per_video=settings.pipeline_frames_per_video
+        submission_video, frames_per_video=pipeline_frames
     )
     ref_frames = annotate_frames(ref_frames_raw, reference_dino.frames)
     sub_frames = annotate_frames(sub_frames_raw, submission_dino.frames)

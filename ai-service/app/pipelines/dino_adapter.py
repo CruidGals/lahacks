@@ -4,7 +4,6 @@ Person 3A's ``app.object_detection`` exposes high-level helpers that return
 aggregate ``DetectionSummary`` objects (counts only). The LLM pipelines need
 per-frame bounding boxes, so this adapter goes one level deeper: it samples
 frames itself and calls the per-frame detection primitives (
-``detect_objects_in_frame`` for OpenCV / MobileNet-SSD,
 ``_detect_objects_grounding_dino`` for Grounding DINO via Replicate) and
 packs the result into the :class:`DinoOutput` contract every pipeline expects.
 
@@ -29,7 +28,6 @@ import httpx
 from app.config import Settings, get_settings
 from app.object_detection import (
     _detect_objects_grounding_dino,
-    detect_objects_in_frame,
 )
 from app.pipelines.dino_types import (
     Bbox,
@@ -146,39 +144,6 @@ def _sample_frames_sync(
         cap.release()
 
 
-async def _detect_with_opencv(
-    samples: list[tuple[int, float, "cv2.Mat"]],
-    *,
-    width: int,
-    height: int,
-    conf_threshold: float = 0.4,
-) -> list[FrameDetections]:
-    """OpenCV/MobileNet-SSD per-frame detection. Synchronous under the hood."""
-
-    def _run():
-        out: list[FrameDetections] = []
-        for sampled_idx, (_orig_idx, ts, frame) in enumerate(samples):
-            raw = detect_objects_in_frame(frame, conf_threshold=conf_threshold)
-            detections: list[Detection] = []
-            for label, conf, box in raw:
-                bbox = _xyxy_to_bbox(box, width, height)
-                if bbox is None:
-                    continue
-                detections.append(
-                    Detection(label=label, confidence=float(conf), bbox=bbox)
-                )
-            out.append(
-                FrameDetections(
-                    timestamp_s=round(ts, 3),
-                    frame_index=sampled_idx,
-                    detections=detections,
-                )
-            )
-        return out
-
-    return await asyncio.to_thread(_run)
-
-
 async def _detect_with_grounding_dino(
     samples: list[tuple[int, float, "cv2.Mat"]],
     *,
@@ -228,13 +193,15 @@ async def build_dino_output_from_video(
 ) -> DinoOutput:
     """Run object detection on a video and return a :class:`DinoOutput`.
 
-    Backend selection mirrors :func:`app.vision.check_task_complete`: it
-    honours ``settings.vision_detector_backend`` (``opencv`` or
-    ``grounding_dino``) so swapping detectors is a single env var.
+    This adapter is Grounding-DINO only.
     """
 
     settings = settings or get_settings()
     backend = settings.vision_detector_backend.lower().strip()
+    if backend != "grounding_dino":
+        logger.warning(
+            "dino_adapter_forcing_grounding_dino configured_backend=%s", backend
+        )
 
     path, cleanup = await _normalize_to_local_file(video)
     try:
@@ -251,12 +218,9 @@ async def build_dino_output_from_video(
                 summary={},
             )
 
-        if backend == "grounding_dino":
-            frames = await _detect_with_grounding_dino(
-                samples, width=width, height=height, settings=settings
-            )
-        else:
-            frames = await _detect_with_opencv(samples, width=width, height=height)
+        frames = await _detect_with_grounding_dino(
+            samples, width=width, height=height, settings=settings
+        )
 
         summary: Counter[str] = Counter()
         for frame in frames:

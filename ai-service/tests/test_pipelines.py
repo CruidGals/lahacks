@@ -50,6 +50,7 @@ from app.pipelines.reference_pipeline import (
     TrashItem,
     run_reference_pipeline,
 )
+from app.pipelines.spec_pipeline import SpecBbox, SpecCandidate, SpecCandidateSet, SpecPreviewFrame
 from tests.fixtures import (
     load_dino_clean_submission,
     load_dino_reference,
@@ -452,21 +453,56 @@ async def test_disposal_pipeline_stub_returns_default_verdict(stub_settings):
 # ---- Endpoints --------------------------------------------------------- #
 
 
-def test_reference_endpoint_returns_spec():
+def test_spec_candidates_endpoint_returns_stage1_candidates(monkeypatch):
     settings = _build_settings()
     _override_endpoint_settings(settings)
+
+    async def fake_extract(_video, *, settings):
+        return SpecCandidateSet(
+            video_url="https://example.com/site.mp4",
+            duration_s=2.0,
+            width=640,
+            height=480,
+            broad_prompt="trash bag . bottle . tire",
+            sample_every_n_frames=10,
+            samples_taken=3,
+            candidates=[
+                SpecCandidate(
+                    candidate_id="cand_1",
+                    label="trash bag",
+                    confidence=0.91,
+                    bbox=SpecBbox(x=10, y=20, w=80, h=100),
+                    source_frame_index=0,
+                    source_timestamp_s=0.5,
+                    hit_count=2,
+                )
+            ],
+            preview_frames=[
+                SpecPreviewFrame(
+                    frame_index=0,
+                    sample_index=1,
+                    timestamp_s=0.5,
+                    width=640,
+                    height=480,
+                    image_b64="/9j/abc",
+                    annotated_b64="/9j/def",
+                    candidate_ids=["cand_1"],
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.api.routes.extract_spec_candidates", fake_extract)
     try:
-        body = {
-            "video_url": "https://example.com/site.mp4",
-            "dino": load_dino_reference(),
-        }
         with TestClient(app) as client:
-            response = client.post("/pipelines/reference", json=body)
+            response = client.post(
+                "/pipelines/spec/candidates",
+                json={"video_url": "https://example.com/site.mp4"},
+            )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["items"]
-        assert data["raw_dino_summary"]["plastic_bottle"] == 5
-        assert data["annotated_frames_b64"]
+        assert data["candidates"]
+        assert data["candidates"][0]["label"] == "trash bag"
+        assert data["preview_frames"][0]["candidate_ids"] == ["cand_1"]
     finally:
         _clear_endpoint_settings()
 
@@ -522,26 +558,32 @@ def test_cleanup_endpoint_returns_verdict():
         _clear_endpoint_settings()
 
 
-def test_reference_endpoint_400_when_no_api_key_and_no_stub(monkeypatch):
+def test_spec_candidates_endpoint_does_not_require_openai_api_key(monkeypatch):
     settings = _build_settings(pipeline_use_stub=False, openai_api_key=None)
     _override_endpoint_settings(settings)
 
-    # Don't try to download a real URL during the test.
-    from app.pipelines import reference_pipeline
+    async def fake_extract(_video, *, settings):
+        return SpecCandidateSet(
+            video_url="https://example.com/x.mp4",
+            duration_s=1.0,
+            width=320,
+            height=240,
+            broad_prompt="trash bag . bottle",
+            sample_every_n_frames=10,
+            samples_taken=2,
+            candidates=[],
+            preview_frames=[],
+        )
 
-    async def fake_extract(_video, *, frames_per_video):
-        return make_placeholder_frames(frames_per_video, label="ref")
-
-    monkeypatch.setattr(reference_pipeline, "extract_frames", fake_extract)
+    monkeypatch.setattr("app.api.routes.extract_spec_candidates", fake_extract)
 
     try:
-        body = {
-            "video_url": "https://example.com/x.mp4",
-            "dino": load_dino_reference(),
-        }
         with TestClient(app) as client:
-            response = client.post("/pipelines/reference", json=body)
-        assert response.status_code == 400
-        assert "OPENAI_API_KEY" in response.text
+            response = client.post(
+                "/pipelines/spec/candidates",
+                json={"video_url": "https://example.com/x.mp4"},
+            )
+        assert response.status_code == 200
+        assert response.json()["candidates"] == []
     finally:
         _clear_endpoint_settings()

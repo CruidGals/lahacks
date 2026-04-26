@@ -1,9 +1,4 @@
-"""Standalone HTTP endpoints for the three LLM pipelines.
-
-These let any caller exercise each pipeline in isolation while DINO and
-backend integration are still in progress, e.g.::
-
-    curl -X POST http://localhost:8001/pipelines/reference -d @body.json
+"""Standalone HTTP endpoints for cleanup + Stage 1 spec pipelines.
 
 The existing ``/verify`` endpoint stays in :mod:`app.main` and is unaffected.
 Endpoints here always return the pipeline's Pydantic model directly so the
@@ -11,8 +6,6 @@ JSON schema FastAPI serves under ``/docs`` matches the in-process types.
 """
 
 from __future__ import annotations
-
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -22,7 +15,7 @@ from app.pipelines.cleanup_pipeline import CleanupVerdict, run_cleanup_pipeline
 from app.pipelines.dino_types import DinoOutput
 from app.pipelines.disposal_pipeline import DisposalVerdict, run_disposal_pipeline
 from app.pipelines.llm_client import LLMConfigError, LLMResponseError
-from app.pipelines.reference_pipeline import ReferenceSpec, run_reference_pipeline
+from app.pipelines.reference_pipeline import ReferenceSpec
 from app.pipelines.spec_pipeline import (
     GroundTruthSpec,
     SpecCandidateSet,
@@ -30,24 +23,13 @@ from app.pipelines.spec_pipeline import (
     build_ground_truth_spec,
     extract_spec_candidates,
 )
+from app.pipelines.submission_pipeline import Stage2Result, run_stage2_pipeline
 from app.pipelines.xp_pipeline import XpReward, run_xp_pipeline
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
-logger = logging.getLogger(__name__)
 
 
 # --- Request models ------------------------------------------------------- #
-
-
-class ReferencePipelineRequest(BaseModel):
-    """Body for ``POST /pipelines/reference``.
-
-    ``dino`` is optional -- when omitted the adapter runs the configured
-    object detector against ``video_url`` to produce one.
-    """
-
-    video_url: str
-    dino: DinoOutput | None = None
 
 
 class CleanupPipelineRequest(BaseModel):
@@ -83,6 +65,8 @@ class SpecCandidatesRequest(BaseModel):
     video_url: str
 
 
+class Stage2Request(BaseModel):
+    """Body for ``POST /pipelines/submission/verify``.
 class XpPipelineRequest(BaseModel):
     """Body for ``POST /pipelines/xp``.
 
@@ -100,27 +84,15 @@ class XpPipelineRequest(BaseModel):
 
 # --- Endpoints ------------------------------------------------------------ #
 
+    Stage 2 entry point. The submission video is analysed against the
+    confirmed :class:`GroundTruthSpec` to produce a :class:`Stage2Result`.
+    """
 
-@router.post(
-    "/reference",
-    response_model=ReferenceSpec,
-    status_code=status.HTTP_200_OK,
-    summary="Person A: video + DINO -> ReferenceSpec",
-)
-async def run_reference(
-    body: ReferencePipelineRequest,
-    settings: Settings = Depends(get_settings),
-) -> ReferenceSpec:
-    try:
-        return await run_reference_pipeline(
-            video=body.video_url,
-            dino=body.dino,
-            settings=settings,
-        )
-    except LLMConfigError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except LLMResponseError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    submission_video_url: str
+    spec: GroundTruthSpec
+
+
+# --- Endpoints ------------------------------------------------------------ #
 
 
 @router.post(
@@ -216,6 +188,34 @@ async def run_spec_confirm(
     return build_ground_truth_spec(body)
 
 
+# --- Stage 2 (submission time) ----------------------------------------- #
+
+
+@router.post(
+    "/submission/verify",
+    response_model=Stage2Result,
+    status_code=status.HTTP_200_OK,
+    summary="Stage 2: submission video + spec -> object grouping + LLM validation + matching",
+)
+async def run_submission_verify(
+    body: Stage2Request,
+    settings: Settings = Depends(get_settings),
+) -> Stage2Result:
+    """Run the Stage 2 pipeline: DINO detection on the submission video with
+    the spec-derived prompt, IoU object tracking, per-object crop extraction,
+    LLM validation, and greedy matching against spec items.
+    """
+
+    try:
+        return await run_stage2_pipeline(
+            body.submission_video_url,
+            body.spec,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 @router.post(
     "/xp",
     response_model=XpReward,

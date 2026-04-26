@@ -6,50 +6,11 @@ import asyncio
 import os
 from collections import Counter
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Iterable
 
 import cv2
-import httpx
-
-MODEL_DIR = Path(__file__).resolve().parents[1] / "models"
-PROTOTXT_PATH = MODEL_DIR / "deploy.prototxt"
-CAFFEMODEL_PATH = MODEL_DIR / "mobilenet_iter_73000.caffemodel"
-
-PROTOTXT_URL = (
-    "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/"
-    "deploy.prototxt"
-)
-CAFFEMODEL_URL = (
-    "https://github.com/chuanqi305/MobileNet-SSD/raw/master/"
-    "mobilenet_iter_73000.caffemodel"
-)
-
-CLASS_NAMES = [
-    "background",
-    "aeroplane",
-    "bicycle",
-    "bird",
-    "boat",
-    "bottle",
-    "bus",
-    "car",
-    "cat",
-    "chair",
-    "cow",
-    "diningtable",
-    "dog",
-    "horse",
-    "motorbike",
-    "person",
-    "pottedplant",
-    "sheep",
-    "sofa",
-    "train",
-    "tvmonitor",
-]
 
 
 def _ensure_replicate_token_loaded() -> None:
@@ -81,54 +42,6 @@ class DetectionSummary:
     unique_labels: Counter[str]
     frame_detection_labels: Counter[str]
     frames_sampled: int
-
-
-def _download_file(url: str, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        destination.write_bytes(response.content)
-
-
-def ensure_model_files() -> None:
-    if not PROTOTXT_PATH.exists():
-        _download_file(PROTOTXT_URL, PROTOTXT_PATH)
-    if not CAFFEMODEL_PATH.exists():
-        _download_file(CAFFEMODEL_URL, CAFFEMODEL_PATH)
-
-
-@lru_cache(maxsize=1)
-def load_detector() -> cv2.dnn_Net:
-    ensure_model_files()
-    return cv2.dnn.readNetFromCaffe(str(PROTOTXT_PATH), str(CAFFEMODEL_PATH))
-
-
-def detect_objects_in_frame(frame, conf_threshold: float = 0.4) -> list[tuple[str, float, tuple[int, int, int, int]]]:
-    net = load_detector()
-    height, width = frame.shape[:2]
-    blob = cv2.dnn.blobFromImage(
-        cv2.resize(frame, (300, 300)),
-        scalefactor=0.007843,
-        size=(300, 300),
-        mean=127.5,
-    )
-    net.setInput(blob)
-    detections = net.forward()
-    results: list[tuple[str, float, tuple[int, int, int, int]]] = []
-
-    for i in range(detections.shape[2]):
-        confidence = float(detections[0, 0, i, 2])
-        if confidence < conf_threshold:
-            continue
-        class_idx = int(detections[0, 0, i, 1])
-        if class_idx < 0 or class_idx >= len(CLASS_NAMES):
-            continue
-        box = detections[0, 0, i, 3:7] * [width, height, width, height]
-        x1, y1, x2, y2 = box.astype("int")
-        label = CLASS_NAMES[class_idx]
-        results.append((label, confidence, (x1, y1, x2, y2)))
-    return results
 
 
 def parse_grounding_dino_output(output: object) -> list[tuple[str, float, tuple[int, int, int, int]]]:
@@ -470,43 +383,6 @@ def track_objects_with_metadata(
     return out
 
 
-def summarize_video_objects(
-    video_path: Path,
-    sample_every_n_frames: int = 24,
-    max_frames: int = 480,
-) -> DetectionSummary:
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise ValueError(f"Unable to open video: {video_path}")
-
-    per_frame_counts: Counter[str] = Counter()
-    sampled_detections: list[list[tuple[str, float, tuple[int, int, int, int]]]] = []
-    sampled = 0
-    frame_idx = 0
-    try:
-        while cap.isOpened() and sampled < max_frames:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            if frame_idx % sample_every_n_frames == 0:
-                detections = detect_objects_in_frame(frame)
-                sampled_detections.append(detections)
-                for label, _conf, _box in detections:
-                    per_frame_counts[label] += 1
-                sampled += 1
-            frame_idx += 1
-    finally:
-        cap.release()
-
-    unique_counts, _ = _track_unique_objects(sampled_detections, min_confidence=0.4)
-    return DetectionSummary(
-        labels=unique_counts,
-        unique_labels=unique_counts,
-        frame_detection_labels=per_frame_counts,
-        frames_sampled=sampled,
-    )
-
-
 async def summarize_video_objects_grounding_dino(
     video_path: Path,
     query: str,
@@ -565,90 +441,6 @@ async def summarize_video_objects_grounding_dino(
         frame_detection_labels=per_frame_counts,
         frames_sampled=len(sampled_frames),
     )
-
-
-def annotate_video(
-    input_video: Path,
-    output_video: Path,
-    sample_every_n_frames: int = 12,
-    max_frames: int = 600,
-    persist_frames: int = 12,
-) -> Path:
-    cap = cv2.VideoCapture(str(input_video))
-    if not cap.isOpened():
-        raise ValueError(f"Unable to open video: {input_video}")
-
-    output_video.parent.mkdir(parents=True, exist_ok=True)
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
-    writer = cv2.VideoWriter(
-        str(output_video),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (width, height),
-    )
-
-    sampled_detections: list[list[tuple[str, float, tuple[int, int, int, int]]]] = []
-    cached_frames: list = []
-    frame_idx = 0
-    try:
-        while cap.isOpened() and frame_idx < max_frames:
-            ok, frame = cap.read()
-            if not ok:
-                break
-
-            cached_frames.append(frame.copy())
-            if frame_idx % sample_every_n_frames == 0:
-                sampled_detections.append(detect_objects_in_frame(frame))
-            frame_idx += 1
-
-        unique_counts, track_boxes = _track_unique_objects(sampled_detections)
-
-        sampled_idx = 0
-        # Keep last known boxes so overlays persist between sampled frames.
-        last_seen: dict[int, tuple[str, tuple[int, int, int, int], int]] = {}
-        for idx, frame in enumerate(cached_frames):
-            if idx % sample_every_n_frames == 0:
-                boxes_for_frame = track_boxes.get(str(sampled_idx), {})
-                for track_id, (label, bbox) in boxes_for_frame.items():
-                    last_seen[track_id] = (label, bbox, idx)
-                cv2.putText(
-                    frame,
-                    "unique: " + ", ".join(f"{k}:{v}" for k, v in unique_counts.most_common(4)),
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 0),
-                    2,
-                )
-                sampled_idx += 1
-
-            # Draw tracks for current frame, persisting stale boxes briefly.
-            expired: list[int] = []
-            for track_id, (label, (x1, y1, x2, y2), seen_idx) in last_seen.items():
-                if idx - seen_idx > persist_frames:
-                    expired.append(track_id)
-                    continue
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(
-                    frame,
-                    f"{label}#{track_id}",
-                    (x1, max(20, y1 - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                )
-            for track_id in expired:
-                del last_seen[track_id]
-            writer.write(frame)
-    finally:
-        cap.release()
-        writer.release()
-
-    return output_video
 
 
 def most_common_labels(labels: Counter[str], top_n: int = 8) -> Iterable[tuple[str, int]]:
@@ -754,26 +546,42 @@ async def annotate_video_grounding_dino(
             first_seen_sample_for_track.setdefault(track_id, sample_idx)
 
     sampled_idx = 0
-    last_seen: dict[int, tuple[str, tuple[int, int, int, int], int]] = {}
+    last_seen: dict[int, tuple[str, float, tuple[int, int, int, int], int]] = {}
     cumulative_unique_seen: Counter[str] = Counter()
     for idx, frame in enumerate(cached_frames):
         if idx % sample_every_n_frames == 0 and sampled_idx < len(detections_per_sample):
             boxes_for_frame = track_boxes.get(str(sampled_idx), {})
+            dets_for_sample = detections_per_sample[sampled_idx]
+            # Fast exact lookup first (label + bbox), fallback to IoU if needed.
+            conf_lookup: dict[tuple[str, tuple[int, int, int, int]], float] = {
+                (label, bbox): conf for label, conf, bbox in dets_for_sample
+            }
             for track_id, (label, bbox) in boxes_for_frame.items():
-                last_seen[track_id] = (label, bbox, idx)
+                confidence = conf_lookup.get((label, bbox))
+                if confidence is None:
+                    confidence = 0.0
+                    best_iou = 0.0
+                    for det_label, det_conf, det_bbox in dets_for_sample:
+                        if det_label != label:
+                            continue
+                        score = _iou(bbox, det_bbox)
+                        if score > best_iou:
+                            best_iou = score
+                            confidence = det_conf
+                last_seen[track_id] = (label, confidence, bbox, idx)
                 if first_seen_sample_for_track.get(track_id) == sampled_idx:
                     cumulative_unique_seen[label] += 1
             sampled_idx += 1
 
         expired: list[int] = []
-        for track_id, (label, (x1, y1, x2, y2), seen_at) in last_seen.items():
+        for track_id, (label, confidence, (x1, y1, x2, y2), seen_at) in last_seen.items():
             if idx - seen_at > persist_frames:
                 expired.append(track_id)
                 continue
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 255), 2)
             cv2.putText(
                 frame,
-                f"{label}#{track_id}",
+                f"{label} {confidence:.2f} #{track_id}",
                 (x1, max(20, y1 - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -783,7 +591,9 @@ async def annotate_video_grounding_dino(
         for track_id in expired:
             del last_seen[track_id]
 
-        active_labels: Counter[str] = Counter(label for label, _bbox, _seen in last_seen.values())
+        active_labels: Counter[str] = Counter(
+            label for label, _conf, _bbox, _seen in last_seen.values()
+        )
         _draw_overlay_hud(
             frame,
             active_labels=active_labels,

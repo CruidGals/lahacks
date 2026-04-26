@@ -212,15 +212,15 @@ async def run_reference_pipeline(
 
     settings = settings or get_settings()
     client = client or OpenAIPipelineClient(settings)
+    pipeline_use_stub = getattr(settings, "pipeline_use_stub", False)
+    pipeline_frames = getattr(settings, "pipeline_frames_per_video", 5)
 
-    if dino is None and not settings.pipeline_use_stub:
+    if dino is None and not pipeline_use_stub:
         dino = await build_dino_output_from_video(video, settings=settings)
 
-    if settings.pipeline_use_stub:
+    if pipeline_use_stub:
         # Stub mode: skip OpenCV + LLM entirely so tests + offline dev are fast.
-        annotated = make_placeholder_frames(
-            settings.pipeline_frames_per_video, label="ref"
-        )
+        annotated = make_placeholder_frames(pipeline_frames, label="ref")
         if dino is None:
             dino = DinoOutput(
                 video_url=str(video) if not isinstance(video, bytes) else "<bytes>",
@@ -234,7 +234,7 @@ async def run_reference_pipeline(
 
     assert dino is not None  # narrowed above
     raw_frames = await extract_frames(
-        video, frames_per_video=settings.pipeline_frames_per_video
+        video, frames_per_video=pipeline_frames
     )
     annotated = annotate_frames(raw_frames, dino.frames)
 

@@ -1,4 +1,4 @@
-"""Video verification pipelines (Stage 1 + Stage 2).
+"""Video verification pipelines (canonical Stage 1 + Stage 2).
 
 Stage 1 (no LLM, posting time):
 
@@ -7,7 +7,13 @@ Stage 1 (no LLM, posting time):
   requester reviews + corrects, and ``build_ground_truth_spec`` converts the
   edits into a :class:`GroundTruthSpec` persisted on the bounty.
 
-Stage 2 (LLM-assisted, submission time):
+Stage 2 (submission time):
+
+* ``submission_pipeline`` -- runs DINO with the spec-derived prompt on the
+  submission video, IoU-tracks into unique objects, crops evidence per object,
+  validates each via LLM, and matches validated objects back to the spec.
+
+Legacy (pre-Stage-2):
 
 * ``cleanup_pipeline``  -- Person B. Compares a reference video to the
   cleaner's submission video plus DINO outputs and produces a
@@ -15,16 +21,12 @@ Stage 2 (LLM-assisted, submission time):
 * ``disposal_pipeline`` -- standalone LLM check that the cleaner actually
   deposited trash into a bin. Produces a :class:`DisposalVerdict`.
 
-The legacy ``reference_pipeline`` is kept temporarily for back-compat tests:
-it's the LLM-authored ReferenceSpec from the previous design and is no longer
-the canonical Stage 1 entry point.
 """
 
 from app.pipelines.cleanup_pipeline import CleanupVerdict, ItemResolution, run_cleanup_pipeline
 from app.pipelines.dino_adapter import build_dino_output_from_video
 from app.pipelines.dino_types import Bbox, Detection, DinoOutput, FrameDetections
 from app.pipelines.disposal_pipeline import DisposalVerdict, run_disposal_pipeline
-from app.pipelines.reference_pipeline import ReferenceSpec, TrashItem, run_reference_pipeline
 from app.pipelines.spec_pipeline import (
     GroundTruthSpec,
     ManualSpecItemDraft,
@@ -37,6 +39,15 @@ from app.pipelines.spec_pipeline import (
     build_ground_truth_spec,
     extract_spec_candidates,
 )
+from app.pipelines.submission_pipeline import (
+    LLMObjectVerdict,
+    ObjectCrop,
+    SpecMatchResult,
+    Stage2FinalVerdict,
+    Stage2Result,
+    SubmissionObject,
+    run_stage2_pipeline,
+)
 from app.pipelines.xp_pipeline import XpReward, run_xp_pipeline
 
 __all__ = [
@@ -48,14 +59,19 @@ __all__ = [
     "FrameDetections",
     "GroundTruthSpec",
     "ItemResolution",
+    "LLMObjectVerdict",
     "ManualSpecItemDraft",
-    "ReferenceSpec",
+    "ObjectCrop",
     "SpecBbox",
     "SpecCandidate",
     "SpecCandidateSet",
     "SpecConfirmRequest",
     "SpecItem",
+    "SpecMatchResult",
     "SpecPreviewFrame",
+    "Stage2FinalVerdict",
+    "Stage2Result",
+    "SubmissionObject",
     "TrashItem",
     "XpReward",
     "build_dino_output_from_video",
@@ -63,6 +79,7 @@ __all__ = [
     "extract_spec_candidates",
     "run_cleanup_pipeline",
     "run_disposal_pipeline",
+    "run_stage2_pipeline",
     "run_reference_pipeline",
     "run_xp_pipeline",
 ]
