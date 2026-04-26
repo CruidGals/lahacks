@@ -261,7 +261,7 @@ export default function BountyDetailPage({
 
           {/* Sticky bottom CTA */}
           <div
-            className="fixed bottom-0 left-0 right-0 mx-auto max-w-[480px] bg-white/95 backdrop-blur border-t border-[color:var(--color-border)] px-4 pt-3 z-30"
+            className="fixed bottom-0 left-0 right-0 mx-auto max-w-[430px] bg-white/95 backdrop-blur border-t border-[color:var(--color-border)] px-4 pt-3 z-30"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
           >
             {bounty.status === "open" && (

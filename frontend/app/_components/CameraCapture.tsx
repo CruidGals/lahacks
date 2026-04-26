@@ -264,7 +264,7 @@ export function CameraCapture({
   const submitDisabled = !recordedBlob || !!submitting;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black mx-auto max-w-[480px]">
+    <div className="fixed inset-0 z-50 bg-black mx-auto max-w-[430px]">
       {/* Live preview / playback */}
       <div className="absolute inset-0 overflow-hidden">
         {permissionError ? (

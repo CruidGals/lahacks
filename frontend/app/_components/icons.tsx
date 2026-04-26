@@ -184,6 +184,14 @@ export function CoinIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function SolanaIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 7h12l-2 2H4l2-2Zm2 4h12l-2 2H6l2-2Zm-2 4h12l-2 2H4l2-2Z" />
+    </svg>
+  );
+}
+
 export function FireIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...props}>

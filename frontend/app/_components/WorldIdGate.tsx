@@ -55,7 +55,7 @@ export function WorldIdGate({
             One human, one account
           </h3>
           <p className="text-center text-sm text-[color:var(--color-muted)] mt-1.5 max-w-[320px] mx-auto">
-            Cleanr requires World ID verification before your first claim. This
+            EcoBounty requires World ID verification before your first claim. This
             blocks bot farms and gives funders confidence their bounties go to a
             real person.
           </p>

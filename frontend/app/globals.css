@@ -72,7 +72,7 @@ body {
 /* Mobile-first frame: keep content within a phone-sized column on larger screens */
 .app-frame {
   width: 100%;
-  max-width: 480px;
+  max-width: 410px;
   margin: 0 auto;
   min-height: 100dvh;
   background: var(--color-bg);
@@ -88,7 +88,7 @@ body {
   .app-frame {
     box-shadow: 0 30px 80px rgba(16, 24, 40, 0.08),
       0 4px 12px rgba(16, 24, 40, 0.04);
-    border-radius: 32px;
+    border-radius: 32px 32px 0 0;
     overflow: hidden;
     margin-top: 24px;
     margin-bottom: 24px;

@@ -42,7 +42,7 @@ export default function OnboardingPage() {
         <span className="grid place-items-center w-8 h-8 rounded-full bg-[color:var(--color-brand-500)] text-white">
           <LeafIcon width={16} height={16} />
         </span>
-        <span className="text-sm font-semibold tracking-tight">Cleanr</span>
+        <span className="text-sm font-semibold tracking-tight">EcoBounty</span>
       </div>
 
       <div className="flex-1 flex flex-col justify-center">
@@ -169,7 +169,7 @@ function VerifyStep({
       </h2>
       <p className="text-sm text-[color:var(--color-muted)] leading-relaxed">
         World ID confirms you&rsquo;re a unique person without revealing who you are.
-        Cleanr never sees your identity — just the proof.
+        EcoBounty never sees your identity — just the proof.
       </p>
       <Card className="p-4 text-left">
         <ul className="grid gap-2.5">

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import BountyMapClient from "./_components/BountyMapClient";
 import { Badge } from "./_components/Badge";
-import { CrosshairIcon, FilterIcon, LeafIcon } from "./_components/icons";
+import { CrosshairIcon, FilterIcon, LeafIcon, PlusIcon } from "./_components/icons";
 import { useGeolocation } from "../lib/useGeolocation";
 import { getBounties } from "../lib/api";
 import type { Bounty, BountyStatus } from "../lib/types";
@@ -40,6 +41,7 @@ const REWARD_BUCKETS = [
 ] as const;
 
 export default function MapHome() {
+  const router = useRouter();
   const geo = useGeolocation();
   const [bounties, setBounties] = useState<Bounty[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -113,6 +115,19 @@ export default function MapHome() {
     (categoryFilter !== "all" ? 1 : 0) +
     (rewardFilter !== "any" ? 1 : 0);
 
+  const onAddClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.animate(
+      [
+        { transform: "scale(1)", boxShadow: "var(--shadow-cta)" },
+        { transform: "scale(0.72)", boxShadow: "0 0 0 10px rgba(22,163,74,0.25)" },
+        { transform: "scale(1.12)", boxShadow: "0 0 0 0 rgba(22,163,74,0)" },
+        { transform: "scale(1)", boxShadow: "var(--shadow-cta)" },
+      ],
+      { duration: 320, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+    );
+    window.setTimeout(() => router.push("/post"), 170);
+  };
+
   return (
     <div className="relative flex-1 flex flex-col">
       {/* Map fills the screen */}
@@ -131,13 +146,20 @@ export default function MapHome() {
         className="relative z-10 px-4 pt-3 pointer-events-none"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 12px)" }}
       >
-        <div className="flex items-center justify-between gap-2 pointer-events-auto">
-          <div className="flex items-center gap-2 bg-white/95 backdrop-blur rounded-full px-3 py-2 shadow-[var(--shadow-card)] border border-[color:var(--color-border)]">
+        <div className="relative flex items-center justify-between gap-2 pointer-events-auto">
+          <div className="w-fit flex items-center gap-2 bg-white/95 backdrop-blur rounded-full px-3 py-2 shadow-[var(--shadow-card)] border border-[color:var(--color-border)]">
             <span className="grid place-items-center w-6 h-6 rounded-full bg-[color:var(--color-brand-500)] text-white">
               <LeafIcon width={14} height={14} />
             </span>
-            <span className="text-sm font-semibold tracking-tight">Cleanr</span>
+            <span className="text-sm font-semibold tracking-tight">EcoBounty</span>
           </div>
+          <button
+            onClick={onAddClick}
+            aria-label="Post a bounty"
+            className="absolute left-1/2 -translate-x-1/2 grid place-items-center w-12 h-12 rounded-full bg-[color:var(--color-brand-500)] text-white shadow-[var(--shadow-cta)] ring-4 ring-white/75 active:scale-90 transition-transform"
+          >
+            <PlusIcon width={22} height={22} />
+          </button>
           <button
             onClick={() => setFiltersOpen(true)}
             className="relative bg-white/95 backdrop-blur rounded-full px-3.5 py-2 shadow-[var(--shadow-card)] border border-[color:var(--color-border)] flex items-center gap-1.5 text-sm font-medium"

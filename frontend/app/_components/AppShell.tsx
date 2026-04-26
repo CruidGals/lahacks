@@ -14,13 +14,16 @@ const HIDDEN_NAV_PREFIXES = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
   const showNav = !HIDDEN_NAV_PREFIXES.some((p) => pathname.startsWith(p));
+  const reserveBottomNavSpace = showNav && pathname !== "/";
 
   return (
     <div className="app-frame">
       <main
         className="flex-1 flex flex-col"
         style={{
-          paddingBottom: showNav ? "calc(72px + env(safe-area-inset-bottom))" : 0,
+          paddingBottom: reserveBottomNavSpace
+            ? "calc(72px + env(safe-area-inset-bottom))"
+            : 0,
         }}
       >
         {children}

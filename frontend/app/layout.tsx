@@ -14,14 +14,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cleanr — get paid to clean up",
+  title: "EcoBounty — get paid to clean up",
   description:
     "A bounty marketplace for civic cleanup. Claim a site, do the work, get paid in Solana — verified by AI.",
-  applicationName: "Cleanr",
+  applicationName: "EcoBounty",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Cleanr",
+    title: "EcoBounty",
   },
   formatDetection: {
     telephone: false,

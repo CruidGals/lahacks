@@ -37,7 +37,7 @@ export function Sheet({
         className="flex-1 bg-black/40 fade-in"
       />
       <div
-        className="bg-white rounded-t-[24px] sheet-up shadow-[0_-12px_32px_rgba(16,24,40,0.12)] overflow-hidden mx-auto w-full max-w-[480px]"
+        className="bg-white rounded-t-[24px] sheet-up shadow-[0_-12px_32px_rgba(16,24,40,0.12)] overflow-hidden mx-auto w-full max-w-[430px]"
         style={{
           maxHeight,
           paddingBottom: "env(safe-area-inset-bottom)",

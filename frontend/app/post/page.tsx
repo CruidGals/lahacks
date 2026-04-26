@@ -696,7 +696,7 @@ function StepReference({
         <ul className="mt-2 grid gap-2">
           <Hint>The claimer&rsquo;s after-video must structurally match this scene.</Hint>
           <Hint>The reference is private to verifying claimers and our AI checks.</Hint>
-          <Hint>Cleanr only releases payment when before/after match a real change.</Hint>
+          <Hint>EcoBounty only releases payment when before/after match a real change.</Hint>
         </ul>
       </Card>
     </div>

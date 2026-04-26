@@ -16,10 +16,10 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ClockIcon,
-  CoinIcon,
   FireIcon,
   LeafIcon,
   LocationIcon,
+  SolanaIcon,
   ShieldCheckIcon,
   SparkleIcon,
 } from "../_components/icons";
@@ -156,7 +156,7 @@ export default function ProfilePage() {
             Wallet balance
           </p>
           <p className="text-[34px] font-bold tabular tracking-tight text-[color:var(--color-ink)] mt-1 leading-none flex items-center gap-2">
-            <CoinIcon width={26} height={26} className="text-[color:var(--color-brand-600)]" />
+            <SolanaIcon width={26} height={26} className="text-[color:var(--color-brand-600)]" />
             {user ? user.wallet.balance_sol.toFixed(2) : "—"}
             <span className="text-base font-semibold text-[color:var(--color-muted)] ml-1">SOL</span>
           </p>
@@ -465,7 +465,7 @@ function ClaimedBountyCard({
           </p>
           <div className="flex items-center gap-3 mt-2 text-[11px] tabular text-[color:var(--color-muted)]">
             <span className="inline-flex items-center gap-1">
-              <CoinIcon width={11} height={11} />
+              <SolanaIcon width={11} height={11} />
               <span className="font-semibold text-[color:var(--color-brand-600)]">
                 {formatReward(bounty)}
               </span>
