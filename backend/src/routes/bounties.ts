@@ -49,8 +49,12 @@ bountyRouter.post('/', async (req, res) => {
   }
 
   const rewardLamports = rewardSolToLamports(parsed.data.reward_sol);
+  const escrowTxSig = await escrowBounty({
+    posterId: user.id,
+    rewardLamports
+  });
 
-  const { data: inserted, error: insertError } = await supabase
+  const { data: created, error: insertError } = await supabase
     .from('bounties')
     .insert({
       poster_id: user.id,
@@ -59,47 +63,22 @@ bountyRouter.post('/', async (req, res) => {
       reward_lamports: rewardLamports,
       description: parsed.data.description,
       reference_video_url: parsed.data.reference_video_url ?? null,
-      status: 'open'
+      status: 'open',
+      escrow_tx_sig: escrowTxSig
     })
     .select('*')
     .single();
 
-  if (insertError || !inserted) {
-    res.status(500).json({ error: 'Failed to create bounty.' });
-    return;
-  }
-
-  let escrowTxSig: string | null = null;
-  try {
-    escrowTxSig = await escrowBounty({
-      bountyId: inserted.id,
-      posterId: user.id,
-      rewardLamports
-    });
-  } catch (e) {
-    console.warn(
-      'escrowBounty failed; bounty created without on-chain escrow:',
-      e instanceof Error ? e.message : e
-    );
-  }
-
-  const { data: updated, error: updateError } = await supabase
-    .from('bounties')
-    .update({ escrow_tx_sig: escrowTxSig })
-    .eq('id', inserted.id)
-    .select('*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)')
-    .single();
-
-  if (updateError || !updated) {
-    res.status(500).json({ error: 'Failed to persist escrow transaction.' });
+  if (insertError || !created) {
+    res.status(500).json({ error: 'Escrow succeeded but failed to create bounty record.' });
     return;
   }
 
   res.status(201).json({
     bounty: {
-      ...updated,
-      reward_sol: rewardLamportsToSol(updated.reward_lamports),
-      urgency_score: computeUrgencyScore(updated)
+      ...created,
+      reward_sol: rewardLamportsToSol(created.reward_lamports),
+      urgency_score: computeUrgencyScore(created)
     },
     escrow_tx_sig: escrowTxSig
   });

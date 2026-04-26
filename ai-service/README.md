@@ -66,6 +66,15 @@ PYTHONPATH=. python scripts/object_detection_demo.py ../data/videos/fixtures/270
 
 This writes `artifacts/annotated_preview.mp4` and prints top detected objects.
 
+To run Grounding DINO via Replicate for comparison logic:
+
+```bash
+pip install replicate
+export REPLICATE_API_TOKEN=...
+export VISION_DETECTOR_BACKEND=grounding_dino
+PYTHONPATH=. python scripts/object_detection_demo.py ../data/videos/fixtures/egRequest.MOV --backend grounding_dino --query "trash . litter . garbage . bottle . can . bag"
+```
+
 ## Deployment
 
 A `Dockerfile` is provided for Render / Fly / Railway. Set the env vars from `.env.example` in your deploy target.

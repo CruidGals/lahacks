@@ -9,8 +9,8 @@ import {
 } from '@solana/web3.js';
 
 type EscrowParams = {
-  bountyId: string;
-  posterId: string;
+  bountyId?: string;
+  posterId?: string;
   rewardLamports: number;
 };
 
@@ -79,9 +79,9 @@ export async function escrowBounty(params: EscrowParams): Promise<string> {
     commitment: 'confirmed'
   });
 
-  console.log(
-    `escrow_bounty bounty_id=${params.bountyId} poster_id=${params.posterId} tx=${signature}`
-  );
+  const bountyLabel = params.bountyId ?? 'pending-db-id';
+  const posterLabel = params.posterId ?? 'unknown-poster';
+  console.log(`escrow_bounty bounty_id=${bountyLabel} poster_id=${posterLabel} tx=${signature}`);
   return signature;
 }
 

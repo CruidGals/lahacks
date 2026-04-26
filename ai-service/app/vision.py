@@ -30,11 +30,16 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.config import get_settings
 from app.models import SceneMatchResult, TaskCompleteItem, TaskCompleteResult
-from app.object_detection import summarize_video_objects
+from app.object_detection import summarize_video_objects, summarize_video_objects_grounding_dino
 
 VideoInput: TypeAlias = bytes | Path | str
-TRASH_LIKE_LABELS = {"bottle", "chair", "pottedplant", "tvmonitor"}
+TRASH_LIKE_LABELS = {
+    "bag", "bottle", "can", "trash", "litter", "garbage",
+    "plastic bag", "trash bag", "plastic bottle",
+    "pottedplant", "chair", "tvmonitor",
+}
 
 
 def _looks_like_url(value: str) -> bool:
@@ -123,6 +128,7 @@ async def check_scene_match(
 async def check_task_complete(
     reference_video: VideoInput,
     submission_video: VideoInput,
+    target_query: str | None = None,
 ) -> TaskCompleteResult:
     """Detect objects in videos and estimate cleanup completeness.
 
@@ -133,6 +139,10 @@ async def check_task_complete(
     ref_path, cleanup_ref = await _normalize_to_file(reference_video)
     sub_path, cleanup_sub = await _normalize_to_file(submission_video)
     try:
+        settings = get_settings()
+        detector_backend = settings.vision_detector_backend.lower().strip()
+        effective_query = (target_query or settings.cleanup_target_query).strip()
+
         # Explicit failure mode for automated tests and sandbox demos.
         if "fail-task" in sub_path.name.lower():
             return TaskCompleteResult(
@@ -142,8 +152,25 @@ async def check_task_complete(
             )
 
         try:
-            ref_summary = await asyncio.to_thread(summarize_video_objects, ref_path)
-            sub_summary = await asyncio.to_thread(summarize_video_objects, sub_path)
+            if detector_backend == "grounding_dino":
+                # Run sequentially to avoid free-tier Replicate burst throttling.
+                ref_summary = await summarize_video_objects_grounding_dino(
+                    ref_path,
+                    query=effective_query,
+                    model=settings.grounding_dino_model,
+                    box_threshold=settings.grounding_dino_box_threshold,
+                    text_threshold=settings.grounding_dino_text_threshold,
+                )
+                sub_summary = await summarize_video_objects_grounding_dino(
+                    sub_path,
+                    query=effective_query,
+                    model=settings.grounding_dino_model,
+                    box_threshold=settings.grounding_dino_box_threshold,
+                    text_threshold=settings.grounding_dino_text_threshold,
+                )
+            else:
+                ref_summary = await asyncio.to_thread(summarize_video_objects, ref_path)
+                sub_summary = await asyncio.to_thread(summarize_video_objects, sub_path)
         except Exception:
             # For invalid/unavailable videos in tests or remote placeholders,
             # degrade gracefully instead of crashing pipeline execution.
@@ -151,33 +178,40 @@ async def check_task_complete(
                 task_complete=True,
                 items=[
                     TaskCompleteItem(
-                        description="video_unreadable_or_unavailable; detection_skipped",
+                        description=f"video_unreadable_or_unavailable; detection_skipped backend={detector_backend}",
                         still_present=False,
                     )
                 ],
                 confidence=0.9,
             )
 
-        candidate_labels = [
-            label for label in ref_summary.labels.keys() if label in TRASH_LIKE_LABELS
-        ]
-        if not candidate_labels:
-            candidate_labels = [
-                label
-                for label in set(ref_summary.labels.keys()) | set(sub_summary.labels.keys())
-                if label != "background"
-            ]
+        # Focus on labels that are actual cleanup targets.
+        all_labels = set(ref_summary.labels.keys()) | set(sub_summary.labels.keys())
+        target_labels = [l for l in all_labels if l in TRASH_LIKE_LABELS]
+        other_labels = [l for l in all_labels if l not in TRASH_LIKE_LABELS and l != "background"]
+
+        # If no target labels detected at all, fall back to all non-background labels.
+        candidate_labels = target_labels if target_labels else other_labels
 
         items: list[TaskCompleteItem] = []
         still_present_any = False
         for label in sorted(candidate_labels):
             ref_count = ref_summary.labels.get(label, 0)
             sub_count = sub_summary.labels.get(label, 0)
-            still_present = sub_count > 0 and (ref_count == 0 or sub_count >= max(1, ref_count // 2))
+
+            if ref_count == 0:
+                # Object only appeared in submission (not in reference) — skip,
+                # it's not something the requester asked to clean up.
+                continue
+
+            # Cleanup succeeded if submission count dropped to less than 30%
+            # of reference count. Otherwise the trash is still present.
+            removal_ratio = sub_count / ref_count
+            still_present = removal_ratio >= 0.3
             still_present_any = still_present_any or still_present
             items.append(
                 TaskCompleteItem(
-                    description=f"{label} (ref={ref_count}, sub={sub_count})",
+                    description=f"{label} (ref={ref_count}, sub={sub_count}, removed={1 - removal_ratio:.0%})",
                     still_present=still_present,
                 )
             )
@@ -185,14 +219,14 @@ async def check_task_complete(
         if not items:
             items = [
                 TaskCompleteItem(
-                    description="no_objects_detected_in_sampled_frames",
+                    description="no_target_objects_detected_in_sampled_frames",
                     still_present=False,
                 )
             ]
 
         confidence = 0.55 if ref_summary.frames_sampled == 0 else 0.82
-        if candidate_labels:
-            confidence = min(0.95, confidence + 0.01 * len(candidate_labels))
+        if target_labels:
+            confidence = min(0.95, confidence + 0.02 * len(target_labels))
 
         return TaskCompleteResult(
             task_complete=not still_present_any,
