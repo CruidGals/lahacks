@@ -184,11 +184,11 @@ def _build_callback_payload(
     flows through cleanly without GPS / scene-match plumbing.
     """
 
-    missing_str = ", ".join(missing_labels) if missing_labels else ""
+    present_str = ", ".join(missing_labels) if missing_labels else ""
     reasoning = (
         f"Stage 2 verdict: {reason} "
-        f"(matched {matched}/{required} items"
-        + (f", missing: {missing_str}" if missing_str else "")
+        f"({matched}/{required} spec item(s) still detected as real in after video"
+        + (f": {present_str}" if present_str else "")
         + ")"
     )
 
@@ -323,7 +323,8 @@ async def run_fixture_verification(
     )
 
     logger.info(
-        "fixture_verification_complete cleanup_id=%s verified=%s score=%.4f matched=%d/%d",
+        "fixture_verification_complete cleanup_id=%s verified=%s score=%.4f "
+        "spec_still_present=%d/%d",
         cleanup_id,
         verdict.approved,
         verdict.score,
@@ -336,7 +337,7 @@ async def run_fixture_verification(
         percent=80,
         detail=(
             f"fixture_verification_complete — verdict approved={verdict.approved} "
-            f"matched {verdict.matched_count}/{verdict.required_count}. "
+            f"spec items still in after video {verdict.matched_count}/{verdict.required_count}. "
             "Preparing callback payload."
         ),
     )

@@ -1,0 +1,81 @@
+{
+  "spec_prompt": "mattress . trash bag",
+  "submission_video": "data/videos/fixtures/egUserPost1.MOV",
+  "samples_taken": 2,
+  "objects_tracked": 1,
+  "objects_validated": 0,
+  "objects": [
+    {
+      "object_id": "obj_1",
+      "label": "mattress",
+      "frames_detected": 2,
+      "confidences": [
+        0.6362,
+        0.5717
+      ],
+      "peak_confidence": 0.6362,
+      "peak_bbox_xyxy": [
+        0,
+        0,
+        479,
+        639
+      ],
+      "crops": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "confidence": 0.6362,
+          "bbox_xyxy": [
+            0,
+            0,
+            479,
+            639
+          ],
+          "jpeg_b64": "<73836 chars>"
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 3.993,
+          "confidence": 0.5717,
+          "bbox_xyxy": [
+            0,
+            0,
+            479,
+            640
+          ],
+          "jpeg_b64": "<61240 chars>"
+        }
+      ],
+      "llm_verdict": {
+        "is_real": false,
+        "reasoning": "The crops show a large wrinkled gray plastic/vinyl sheet on the floor, not a mattress structure with thickness, edges, or bedding features. The object appears to be flooring or a tarp-like cover rather than a real mattress."
+      }
+    }
+  ],
+  "match_results": [
+    {
+      "item_id": "item_1",
+      "label": "mattress",
+      "matched": false,
+      "matched_object_id": null,
+      "matched_confidence": null
+    },
+    {
+      "item_id": "item_2",
+      "label": "trash bag",
+      "matched": false,
+      "matched_object_id": null,
+      "matched_confidence": null
+    }
+  ],
+  "items_matched": 0,
+  "items_total": 2,
+  "final_verdict": {
+    "approved": true,
+    "score": 1.0,
+    "reason": "No Stage 1 spec categories still have verified real detections in the after video; scene is clear for all required items.",
+    "missing_labels": [],
+    "matched_count": 0,
+    "required_count": 2
+  }
+}

@@ -80,7 +80,13 @@ class SubmissionObject(BaseModel):
 
 
 class SpecMatchResult(BaseModel):
-    """How one spec item was resolved by the submission."""
+    """How one spec item was resolved against the *after* (submission) video.
+
+    For cleanup, Stage 1 spec items are trash / debris that should be **gone** in
+    the submission. So ``matched=True`` means we still see a *validated real*
+    instance of that label — i.e. cleanup incomplete. ``matched=False`` means we
+    did not confirm that category as still present (scene clear for that item).
+    """
 
     item_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
@@ -90,13 +96,15 @@ class SpecMatchResult(BaseModel):
 
 
 class Stage2FinalVerdict(BaseModel):
-    """Final submission decision for Stage 2."""
+    """Final submission decision for Stage 2 (cleanup: trash should *not* remain)."""
 
     approved: bool
     score: float = Field(ge=0.0, le=1.0)
     reason: str = ""
+    # NOTE: name kept for API stability — values are spec labels *still* detected
+    # as real in the after video, not "missing" from the spec list.
     missing_labels: list[str] = Field(default_factory=list)
-    matched_count: int = Field(ge=0)
+    matched_count: int = Field(ge=0)  # count of spec items still found (see SpecMatchResult)
     required_count: int = Field(ge=0)
 
 
@@ -110,6 +118,8 @@ class Stage2Result(BaseModel):
     objects_validated: int = Field(ge=0)
     objects: list[SubmissionObject] = Field(default_factory=list)
     match_results: list[SpecMatchResult] = Field(default_factory=list)
+    # Count of spec items still found as real in the after video (same as
+    # ``final_verdict.matched_count``).
     items_matched: int = Field(ge=0, default=0)
     items_total: int = Field(ge=0, default=0)
     final_verdict: Stage2FinalVerdict
@@ -555,26 +565,40 @@ def _build_final_verdict(
     *,
     items_total: int,
 ) -> Stage2FinalVerdict:
-    matched_count = sum(1 for result in match_results if result.matched)
+    # ``matched`` = spec trash category still has a *real* detection in the after
+    # video. Approval = none of the required categories are still present.
+    spec_still_present = sum(1 for result in match_results if result.matched)
     required_count = max(0, items_total)
-    score = (matched_count / required_count) if required_count > 0 else 1.0
-    missing_labels = [result.label for result in match_results if not result.matched]
-    approved = matched_count >= required_count
+    still_labels = [result.label for result in match_results if result.matched]
+    if required_count == 0:
+        return Stage2FinalVerdict(
+            approved=True,
+            score=1.0,
+            reason="No required spec items; auto-approved.",
+            missing_labels=[],
+            matched_count=0,
+            required_count=0,
+        )
+    # Score rises as the scene is clearer: 0 of N categories still there → 1.0
+    score = 1.0 - (spec_still_present / required_count)
+    approved = spec_still_present == 0
     if approved:
-        reason = "Submission satisfies all required Stage 1 spec items."
-    elif required_count == 0:
-        reason = "No required spec items; auto-approved."
-    else:
         reason = (
-            f"Submission matched {matched_count}/{required_count} required items; "
-            "some spec items are still missing."
+            "No Stage 1 spec categories still have verified real detections in the "
+            "after video; scene is clear for all required items."
+        )
+    else:
+        labels_str = ", ".join(still_labels)
+        reason = (
+            f"After video still shows {spec_still_present}/{required_count} required "
+            f"debris type(s) as real ({labels_str}). Remove before payout can apply."
         )
     return Stage2FinalVerdict(
         approved=approved,
-        score=round(score, 4),
+        score=round(max(0.0, min(1.0, score)), 4),
         reason=reason,
-        missing_labels=missing_labels,
-        matched_count=matched_count,
+        missing_labels=still_labels,
+        matched_count=spec_still_present,
         required_count=required_count,
     )
 
@@ -629,7 +653,8 @@ async def run_stage2_pipeline(
                     if len(spec.items) == 0
                     else "No submission frames were sampled; cannot verify required items."
                 ),
-                missing_labels=[item.label for item in spec.items],
+                # Nothing verified as "still present" (pipeline did not run).
+                missing_labels=[],
                 matched_count=0,
                 required_count=len(spec.items),
             ),

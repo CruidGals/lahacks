@@ -158,9 +158,13 @@ async def main() -> None:
         )
 
     print()
-    print("--- Spec Matching ---")
+    print("--- Spec vs after-video (cleanup: still_present=False per item is good) ---")
     for m in result.match_results:
-        status = f"MATCHED -> {m.matched_object_id} (conf={m.matched_confidence:.4f})" if m.matched else "UNMATCHED"
+        status = (
+            f"still_present -> {m.matched_object_id} (conf={m.matched_confidence:.4f})"
+            if m.matched
+            else "not_verified_in_after"
+        )
         print(f"  {m.item_id}: {m.label} => {status}")
 
     print()
