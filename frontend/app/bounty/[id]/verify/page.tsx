@@ -3,7 +3,12 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CameraCapture } from "../../../_components/CameraCapture";
-import { getBounty, getSession, submitCleanup } from "../../../../lib/api";
+import {
+  getBounty,
+  getSession,
+  submitCleanup,
+  uploadFixtureVideo,
+} from "../../../../lib/api";
 import type { Bounty, Session } from "../../../../lib/types";
 import { useToast } from "../../../_components/Toast";
 
@@ -26,11 +31,25 @@ export default function VerifyPage({
     if (sid) getSession(sid).then((s) => s && setSession(s));
   }, [id]);
 
-  const onSubmit = async () => {
+  const onSubmit = async (blob: Blob) => {
     if (!session || !bounty) return;
+    if (!blob || blob.size === 0) {
+      toast("Recording is empty", {
+        variant: "error",
+        description: "Try recording again before submitting.",
+      });
+      return;
+    }
     setSubmitting(true);
 
     try {
+      // Upload the captured clip to the AI service's fixture slot first.
+      // We MUST block on this — the backend's /api/cleanups handler triggers
+      // verification immediately, and the verifier reads the fixture file
+      // from disk. Letting the cleanup POST race ahead can pin the verdict
+      // to a stale clip from a previous session.
+      await uploadFixtureVideo(blob);
+
       const { cleanup_id } = await submitCleanup({
         session_id: session.id,
         bounty_id: bounty.id,

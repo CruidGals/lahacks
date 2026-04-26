@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import BountyMapClient from "../_components/BountyMapClient";
 import { ScreenHeader } from "../_components/ScreenHeader";
 import { Button } from "../_components/Button";
 import { Card } from "../_components/Card";
 import { Badge } from "../_components/Badge";
-import { VideoPlaceholder } from "../_components/VideoPlaceholder";
+import { CameraCapture } from "../_components/CameraCapture";
 import {
   ArrowRightIcon,
   CameraIcon,
@@ -21,7 +21,7 @@ import {
 } from "../_components/icons";
 import { useGeolocation } from "../../lib/useGeolocation";
 import { DEFAULT_LOCATION } from "../../lib/mock-data";
-import { getMe, postBounty } from "../../lib/api";
+import { getMe, postBounty, uploadFixtureVideo } from "../../lib/api";
 import type { Bounty, BountyCategory, RewardType } from "../../lib/types";
 import { useToast } from "../_components/Toast";
 import { categoryLabel, formatUsd, formatReward, formatXp } from "../../lib/format";
@@ -55,10 +55,17 @@ export default function PostBountyPage() {
   const [reward, setReward] = useState<string>("0.20");
   const [xpStake, setXpStake] = useState<string>("100");
   const [userXpBalance, setUserXpBalance] = useState<number | null>(null);
-  const [referenceCaptured, setReferenceCaptured] = useState(false);
+  const [referenceBlob, setReferenceBlob] = useState<Blob | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<Bounty | null>(null);
   const [mapRecenterTick, setMapRecenterTick] = useState(0);
+  // Stable nonce used as a watermark while recording the reference video.
+  // Derived once per page mount so retakes don't change it.
+  const noncesRef = useRef<string | null>(null);
+  if (noncesRef.current === null) {
+    noncesRef.current = Math.random().toString(36).slice(2, 10).toUpperCase();
+  }
 
   useEffect(() => {
     if (geo.location) {
@@ -92,13 +99,27 @@ export default function PostBountyPage() {
       if (rewardType === "sol") return base && solRewardOk;
       return base && xpStakeOk;
     }
-    if (step === 3) return referenceCaptured;
+    if (step === 3) return referenceBlob !== null;
     return true;
-  }, [step, title, description, referenceCaptured, rewardType, solRewardOk, xpStakeOk]);
+  }, [step, title, description, referenceBlob, rewardType, solRewardOk, xpStakeOk]);
 
   const onSubmit = async () => {
+    if (!referenceBlob) {
+      toast("Reference video is missing", {
+        variant: "error",
+        description: "Go back to step 3 and record the spot.",
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
+      // Upload the recorded reference clip to the AI service first so Stage 1
+      // has the right ground truth for any future verification of this bounty.
+      // We block on it: posting the bounty without a synced reference would
+      // leave Stage 1 reading a stale fixture from a previous session.
+      await uploadFixtureVideo(referenceBlob, "request");
+
       const common = {
         title: title.trim(),
         description: description.trim(),
@@ -138,8 +159,11 @@ export default function PostBountyPage() {
       getMe()
         .then((u) => setUserXpBalance(u.xp))
         .catch(() => {});
-    } catch {
-      toast("Couldn't post bounty", { variant: "error" });
+    } catch (err) {
+      toast("Couldn't post bounty", {
+        variant: "error",
+        description: err instanceof Error ? err.message : undefined,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -151,6 +175,20 @@ export default function PostBountyPage() {
 
   return (
     <div className="flex-1 flex flex-col">
+      {cameraOpen && (
+        <CameraCapture
+          nonce={noncesRef.current!}
+          category={category}
+          submitLabel="Use this recording"
+          submittingLabel="Saving…"
+          hint="Pan slowly across the spot — this becomes the ground truth"
+          onCancel={() => setCameraOpen(false)}
+          onSubmit={(blob) => {
+            setReferenceBlob(blob);
+            setCameraOpen(false);
+          }}
+        />
+      )}
       <ScreenHeader
         title="New bounty"
         subtitle={`Step ${step} of 4`}
@@ -224,8 +262,8 @@ export default function PostBountyPage() {
         )}
         {step === 3 && (
           <StepReference
-            captured={referenceCaptured}
-            onCapture={() => setReferenceCaptured(true)}
+            referenceBlob={referenceBlob}
+            onOpenCamera={() => setCameraOpen(true)}
             category={category}
           />
         )}
@@ -582,14 +620,30 @@ function StepDetails({
 }
 
 function StepReference({
-  captured,
-  onCapture,
-  category,
+  referenceBlob,
+  onOpenCamera,
+  category: _category,
 }: {
-  captured: boolean;
-  onCapture: () => void;
+  referenceBlob: Blob | null;
+  onOpenCamera: () => void;
   category: BountyCategory;
 }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!referenceBlob) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(referenceBlob);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [referenceBlob]);
+
+  const sizeMb = referenceBlob
+    ? (referenceBlob.size / (1024 * 1024)).toFixed(1)
+    : null;
+
   return (
     <div className="flex-1 px-4 pt-3 pb-6 space-y-5">
       <div>
@@ -602,8 +656,16 @@ function StepReference({
       </div>
 
       <Card className="p-3">
-        {captured ? (
-          <VideoPlaceholder category={category} aspect="aspect-[16/10]" label="Your reference" />
+        {previewUrl ? (
+          <video
+            src={previewUrl}
+            className="w-full aspect-[16/10] rounded-[14px] object-cover bg-black"
+            playsInline
+            muted
+            loop
+            autoPlay
+            controls
+          />
         ) : (
           <div className="aspect-[16/10] rounded-[14px] bg-[color:var(--color-surface)] grid place-items-center text-[color:var(--color-muted)] text-sm">
             <div className="text-center">
@@ -614,15 +676,17 @@ function StepReference({
         )}
         <div className="px-1 pt-3 flex items-center justify-between">
           <p className="text-xs text-[color:var(--color-muted)]">
-            Recommended: 10–15 seconds, full sweep of the spot.
+            {referenceBlob
+              ? `Captured · ${sizeMb} MB. You can re-record if it didn't capture cleanly.`
+              : "Recommended: 10–15 seconds, full sweep of the spot."}
           </p>
           <Button
             size="sm"
-            variant={captured ? "secondary" : "primary"}
-            onClick={onCapture}
+            variant={referenceBlob ? "secondary" : "primary"}
+            onClick={onOpenCamera}
             iconLeft={<CameraIcon width={16} height={16} />}
           >
-            {captured ? "Re-record" : "Record"}
+            {referenceBlob ? "Re-record" : "Record"}
           </Button>
         </div>
       </Card>

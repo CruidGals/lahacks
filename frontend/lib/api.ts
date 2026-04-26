@@ -473,6 +473,79 @@ export async function getSession(id: string): Promise<Session | null> {
 
 // ---------- Cleanups ----------
 
+export type FixtureKind = "submission" | "request";
+
+/**
+ * Upload a recorded clip to one of the AI service's fixture slots.
+ *
+ * `kind="submission"` (default) overwrites the claimer "after" fixture used
+ * by Stage 2 — call this from the verify page before submitting the cleanup
+ * so the verdict reflects the user's actual recording.
+ *
+ * `kind="request"` overwrites the poster "before" fixture used by Stage 1.
+ * Replacing it invalidates the in-process GroundTruthSpec cache, so the next
+ * verification re-derives the ground truth from the new reference video.
+ */
+export async function uploadFixtureVideo(
+  blob: Blob,
+  kind: FixtureKind = "submission"
+): Promise<{
+  kind: FixtureKind;
+  saved_path: string;
+  bytes_written: number;
+  content_type: string | null;
+}> {
+  const baseRaw = process.env.NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL;
+  if (!baseRaw) {
+    throw new Error(
+      "AI fixture upload URL is not configured (set NEXT_PUBLIC_AI_FIXTURE_UPLOAD_URL)."
+    );
+  }
+  if (!blob || blob.size === 0) {
+    throw new Error("Recorded clip is empty.");
+  }
+
+  const base = baseRaw.replace(/\/+$/, "");
+  const url = `${base}/upload-fixture`;
+
+  const mime = blob.type || "video/mp4";
+  const ext = mime.includes("mp4")
+    ? "mp4"
+    : mime.includes("webm")
+    ? "webm"
+    : mime.includes("quicktime")
+    ? "mov"
+    : "bin";
+  const filename = `${kind}.${ext}`;
+
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+  formData.append("kind", kind);
+
+  const res = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+    }
+    throw new Error(
+      `Fixture upload failed (${res.status})${detail ? `: ${detail}` : ""}`
+    );
+  }
+
+  return (await res.json()) as {
+    kind: FixtureKind;
+    saved_path: string;
+    bytes_written: number;
+    content_type: string | null;
+  };
+}
+
 export async function submitCleanup(
   input: CleanupSubmission
 ): Promise<{ cleanup_id: string; status: "pending" }> {

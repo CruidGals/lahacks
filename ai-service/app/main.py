@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.api.routes import router as pipelines_router
 from app.config import Settings, get_settings
 from app.models import VerifyAccepted, VerifyRequest
-from app.pipelines.fixture_verify import run_fixture_verification
+from app.pipelines.fixture_verify import fixture_paths, run_fixture_verification
 from app.verify_pipeline import run_verification
 
 
@@ -35,6 +39,21 @@ app = FastAPI(
         "three standalone /pipelines/* endpoints for OpenAI vision experiments."
     ),
     lifespan=lifespan,
+)
+
+_cors_origins_env = os.environ.get("CORS_ALLOW_ORIGINS", "*").strip()
+_cors_origins = (
+    ["*"]
+    if _cors_origins_env in ("", "*")
+    else [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(pipelines_router)
@@ -102,3 +121,108 @@ async def verify_fixture(
         settings=settings,
     )
     return VerifyAccepted(cleanup_id=req.cleanup_id)
+
+
+_UPLOAD_MAX_BYTES = int(os.environ.get("FIXTURE_UPLOAD_MAX_BYTES", str(200 * 1024 * 1024)))
+
+
+class FixtureUploadResponse(BaseModel):
+    """Response from ``POST /upload-fixture``."""
+
+    kind: str
+    saved_path: str
+    bytes_written: int
+    content_type: str | None = None
+
+
+_VALID_FIXTURE_KINDS = {"submission", "request"}
+
+
+@app.post(
+    "/upload-fixture",
+    response_model=FixtureUploadResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def upload_fixture(
+    file: UploadFile = File(...),
+    kind: str = Form("submission"),
+) -> FixtureUploadResponse:
+    """Replace one of the fixtures used by ``/verify-fixture``.
+
+    The mobile client records a short clip via ``MediaRecorder`` and POSTs
+    the resulting blob here as ``multipart/form-data`` (field name
+    ``file``). The ``kind`` field selects which fixture to overwrite:
+
+    * ``"submission"`` (default) — the claimer's "after" clip; consumed by
+      Stage 2 on the next ``/verify-fixture`` call.
+    * ``"request"`` — the poster's "before" clip; consumed by Stage 1.
+      Overwriting it bumps the file's mtime, which invalidates the in-process
+      ``GroundTruthSpec`` cache so the next verification re-extracts the
+      spec from the new video.
+    """
+
+    kind = (kind or "submission").strip().lower()
+    if kind not in _VALID_FIXTURE_KINDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unknown kind={kind!r}; expected one of "
+                f"{sorted(_VALID_FIXTURE_KINDS)}"
+            ),
+        )
+
+    content_type = (file.content_type or "").lower()
+    if content_type and not content_type.startswith("video/"):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Expected a video upload, got content-type={content_type!r}",
+        )
+
+    request_path, submission_path = fixture_paths()
+    target_path = Path(request_path if kind == "request" else submission_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    bytes_written = 0
+    tmp_path = target_path.with_suffix(target_path.suffix + ".part")
+    try:
+        with tmp_path.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > _UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=(
+                            f"Upload exceeded {_UPLOAD_MAX_BYTES} bytes; "
+                            "shorten the clip or raise FIXTURE_UPLOAD_MAX_BYTES."
+                        ),
+                    )
+                out.write(chunk)
+        if bytes_written == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Empty upload; recording produced no bytes.",
+            )
+        shutil.move(str(tmp_path), str(target_path))
+    except HTTPException:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to write fixture: {exc}",
+        ) from exc
+    finally:
+        await file.close()
+
+    return FixtureUploadResponse(
+        kind=kind,
+        saved_path=str(target_path),
+        bytes_written=bytes_written,
+        content_type=file.content_type,
+    )

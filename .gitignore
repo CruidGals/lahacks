@@ -1,3 +1,7 @@
+# Local fixture videos (uploaded by /upload-fixture, never tracked in git)
+data/videos/fixtures/*
+!data/videos/fixtures/.gitkeep
+
 # dependencies
 node_modules/
 .pnpm-store/
