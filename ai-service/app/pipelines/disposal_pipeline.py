@@ -67,7 +67,7 @@ SYSTEM_PROMPT = (
 
 def _disposal_frame_count(settings: Settings) -> int:
     # The disposal clip is short; clamp to a maximum of 3 frames to control cost.
-    return max(1, min(3, settings.pipeline_frames_per_video))
+    return max(1, min(3, getattr(settings, "pipeline_frames_per_video", 5)))
 
 
 def _stub_verdict() -> DisposalVerdict:
@@ -90,10 +90,11 @@ async def run_disposal_pipeline(
 
     settings = settings or get_settings()
     client = client or OpenAIPipelineClient(settings)
+    pipeline_use_stub = getattr(settings, "pipeline_use_stub", False)
 
     frame_count = _disposal_frame_count(settings)
 
-    if settings.pipeline_use_stub:
+    if pipeline_use_stub:
         # Touch the placeholder helper so import errors surface in tests too.
         _ = make_placeholder_frames(frame_count, label="disposal")
         return _stub_verdict()

@@ -73,6 +73,9 @@ class OpenAIPipelineClient:
         self._settings = settings or get_settings()
         self._async_client = None  # lazy-init so stub mode never imports openai
 
+    def _setting(self, name: str, default):
+        return getattr(self._settings, name, default)
+
     # ---- main entrypoint ------------------------------------------------- #
 
     async def call_json(
@@ -92,16 +95,18 @@ class OpenAIPipelineClient:
         :class:`LLMResponseError` with the raw output for debugging.
         """
 
-        if self._settings.pipeline_use_stub:
+        stub_mode = self._setting("pipeline_use_stub", None)
+        api_key = self._setting("openai_api_key", None)
+        if stub_mode is True or (stub_mode is None and not api_key):
             stub = stub_factory()
             logger.info(
                 "pipeline_stub_used model=%s schema=%s",
-                self._settings.openai_model,
+                self._setting("openai_model", "gpt-5.4-mini"),
                 schema.__name__,
             )
             return stub
 
-        if not self._settings.openai_api_key:
+        if not api_key:
             raise LLMConfigError(
                 "OPENAI_API_KEY missing and PIPELINE_USE_STUB is false; "
                 "cannot run real LLM call. Set one or the other."
@@ -158,34 +163,35 @@ class OpenAIPipelineClient:
         # ``max_completion_tokens`` via ``extra_body`` first so this works even
         # when the installed openai-python stub doesn't expose that keyword.
         common_kwargs = dict(
-            model=self._settings.openai_model,
+            model=self._setting("openai_model", "gpt-5.4-mini"),
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": request.system_prompt},
                 {"role": "user", "content": content_parts},
             ],
         )
+        max_tokens = self._setting("openai_max_tokens", 2000)
         try:
             response = await client.chat.completions.create(
-                extra_body={"max_completion_tokens": self._settings.openai_max_tokens},
+                extra_body={"max_completion_tokens": max_tokens},
                 **common_kwargs,
             )
         except TypeError:
             # Defensive fallback for very old SDKs that don't accept extra_body.
             response = await client.chat.completions.create(
-                max_tokens=self._settings.openai_max_tokens,
+                max_tokens=max_tokens,
                 **common_kwargs,
             )
         except Exception as exc:
             message = str(exc).lower()
             if "max_completion_tokens" in message:
                 response = await client.chat.completions.create(
-                    max_tokens=self._settings.openai_max_tokens,
+                    max_tokens=max_tokens,
                     **common_kwargs,
                 )
             elif "unsupported parameter" in message and "max_tokens" in message:
                 response = await client.chat.completions.create(
-                    extra_body={"max_completion_tokens": self._settings.openai_max_tokens},
+                    extra_body={"max_completion_tokens": max_tokens},
                     **common_kwargs,
                 )
             else:
@@ -210,7 +216,7 @@ class OpenAIPipelineClient:
             # APITimeoutError mid-flight, so we lift it well above that and
             # let the SDK's own ``max_retries`` cover transient blips.
             self._async_client = AsyncOpenAI(
-                api_key=self._settings.openai_api_key,
+                api_key=self._setting("openai_api_key", None),
                 timeout=180.0,
                 max_retries=2,
             )
