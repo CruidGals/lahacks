@@ -7,7 +7,7 @@ import { Badge } from "../../_components/Badge";
 import { Button } from "../../_components/Button";
 import { Card } from "../../_components/Card";
 import { Skeleton } from "../../_components/Skeleton";
-import { VideoPlaceholder } from "../../_components/VideoPlaceholder";
+import { ReferenceVideoPreview } from "../../_components/ReferenceVideoPreview";
 import { WorldIdGate } from "../../_components/WorldIdGate";
 import {
   CoinIcon,
@@ -138,7 +138,8 @@ export default function BountyDetailPage({
       {bounty && (
         <div className="flex-1 flex flex-col">
           <div className="px-4 pt-2">
-            <VideoPlaceholder
+            <ReferenceVideoPreview
+              videoUrl={bounty.reference_video_url}
               label="Poster's reference"
               category={bounty.category}
             />

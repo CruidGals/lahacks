@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.api.routes import router as pipelines_router
@@ -63,6 +64,39 @@ app.include_router(pipelines_router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _media_type_for_video_path(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in (".mp4", ".m4v"):
+        return "video/mp4"
+    if ext in (".mov",):
+        return "video/quicktime"
+    if ext in (".webm",):
+        return "video/webm"
+    return "application/octet-stream"
+
+
+@app.get("/request-fixture")
+async def stream_request_fixture() -> FileResponse:
+    """Serve the poster reference video (``FIXTURE_REQUEST_VIDEO`` / last ``upload-fixture`` ``kind=request``).
+
+    This URL can be stored as ``bounties.reference_video_url`` so claimers can replay
+    the *before* clip. One file per deployment is shared; production should use
+    per-bounty object storage instead.
+    """
+
+    request_path, _ = fixture_paths()
+    if not request_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request fixture not found on disk. Post a reference clip (upload kind=request) first.",
+        )
+    return FileResponse(
+        str(request_path),
+        media_type=_media_type_for_video_path(request_path),
+        filename=request_path.name,
+    )
 
 
 @app.post(

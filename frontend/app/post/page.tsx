@@ -21,7 +21,7 @@ import {
 } from "../_components/icons";
 import { useGeolocation } from "../../lib/useGeolocation";
 import { DEFAULT_LOCATION } from "../../lib/mock-data";
-import { getMe, postBounty, uploadFixtureVideo } from "../../lib/api";
+import { getMe, getReferenceFixtureStreamUrl, postBounty, uploadFixtureVideo } from "../../lib/api";
 import type { Bounty, BountyCategory, RewardType } from "../../lib/types";
 import { useToast } from "../_components/Toast";
 import { categoryLabel, formatUsd, formatReward, formatXp } from "../../lib/format";
@@ -120,6 +120,9 @@ export default function PostBountyPage() {
       // leave Stage 1 reading a stale fixture from a previous session.
       await uploadFixtureVideo(referenceBlob, "request");
 
+      // Persist a replay URL for claimers: AI service ``GET /request-fixture`` (after upload above).
+      const reference_video_url = getReferenceFixtureStreamUrl();
+
       const common = {
         title: title.trim(),
         description: description.trim(),
@@ -127,7 +130,7 @@ export default function PostBountyPage() {
         lng: pinPos.lng,
         address: "Pinned location",
         category,
-        reference_video_url: null,
+        reference_video_url,
         reference_thumbnail_url: null,
       } as const;
 

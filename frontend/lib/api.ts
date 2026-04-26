@@ -485,6 +485,12 @@ export function getAiFixtureServiceBaseUrl(): string | null {
   return raw.replace(/\/+$/, "");
 }
 
+/** Public URL for the poster ``request`` fixture stream (``GET /request-fixture`` on the AI service). */
+export function getReferenceFixtureStreamUrl(): string | null {
+  const base = getAiFixtureServiceBaseUrl();
+  return base ? `${base}/request-fixture` : null;
+}
+
 export type VerificationProgress = {
   cleanup_id: string;
   phase: string;
