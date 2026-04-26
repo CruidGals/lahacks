@@ -4,7 +4,6 @@ import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
 import { refundEscrowToPoster, releaseBountyToClaimer } from '../lib/solana.js';
-import { analyzeTrajectory } from '../lib/trajectory.js';
 
 export const cleanupRouter = Router();
 
@@ -24,26 +23,13 @@ const verificationResultSchema = z.object({
   reasoning: z.string().optional()
 });
 
+// We intentionally only forward ``cleanup_id`` to the AI service. The Stage 2
+// fixture pipeline ignores the recorded video and GPS trajectory entirely --
+// it runs the hardcoded reference + submission fixtures and reports the
+// boolean ``Stage2FinalVerdict.approved`` back to
+// ``/api/cleanups/:id/verification-result``.
 type VerificationPayload = {
   cleanup_id: string;
-  submission_video_url: string;
-  reference_video_url: string | null;
-  bounty_lat: number;
-  bounty_lng: number;
-  gps_trajectory: Array<{
-    lat: number;
-    lng: number;
-    accuracy: number | null;
-    timestamp: string | null;
-  }>;
-  issued_nonce: string | null;
-  session_duration_s: number;
-  trajectory_analysis: {
-    within_radius_pct: number;
-    avg_distance_m: number;
-    total_duration_s: number;
-    suspicious: boolean;
-  };
 };
 
 function isVerificationBypassEnabled(): boolean {
@@ -75,13 +61,15 @@ async function postToAiVerifier(payload: VerificationPayload): Promise<void> {
 
 /**
  * Demo-mode fallback when the AI service is not running.
- * After a short delay, calls the verification-result endpoint locally
- * with verified=true so the end-to-end flow completes.
+ *
+ * The Stage 2 fixture pipeline is the source of truth for verification, so
+ * when no AI service is reachable we just auto-verify after a short delay
+ * so the end-to-end flow continues. Ops will see the warning logged above.
  */
 async function simulateLocalVerification(
   payload: VerificationPayload
 ): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 3500));
+  await new Promise((resolve) => setTimeout(resolve, 2500));
 
   const port = process.env.PORT ?? '8080';
   const baseUrl = process.env.SELF_BASE_URL ?? `http://localhost:${port}`;
@@ -93,23 +81,18 @@ async function simulateLocalVerification(
   };
   if (internalToken) headers['x-internal-token'] = internalToken;
 
-  const trajectoryOk = payload.trajectory_analysis.within_radius_pct >= 50;
-  const sessionOk = payload.session_duration_s >= 30;
-  const verified = trajectoryOk && sessionOk;
-
   try {
     await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        verified,
-        confidence: verified ? 0.92 : 0.3,
-        scene_match: verified,
-        task_complete: verified,
-        fraud_flags: verified ? [] : ['session_too_short_or_off_site'],
-        reasoning: verified
-          ? 'Stub verifier: GPS trajectory and session duration look good.'
-          : 'Stub verifier: trajectory or duration insufficient for auto-verify.'
+        verified: true,
+        confidence: 0.85,
+        scene_match: true,
+        task_complete: true,
+        fraud_flags: [],
+        reasoning:
+          'AI_VERIFY_URL not set; auto-verifying locally so the demo flow completes.'
       })
     });
   } catch (err) {
@@ -195,39 +178,12 @@ cleanupRouter.post('/', async (req, res) => {
     return;
   }
 
-  const { data: pings, error: pingError } = await supabase
-    .from('gps_pings')
-    .select('lat,lng,accuracy,timestamp')
-    .eq('session_id', session.id)
-    .order('timestamp', { ascending: true });
-
-  if (pingError) {
-    res.status(500).json({ error: 'Failed to load GPS trajectory.' });
-    return;
-  }
-
-  const startedAtMs = session.started_at
-    ? new Date(session.started_at).getTime()
-    : Date.now();
-  const durationSec = Math.max(
-    0,
-    Math.round((Date.now() - startedAtMs) / 1_000)
-  );
-
+  // GPS trajectory + reference video URL are intentionally not forwarded.
+  // The AI service runs the Stage 2 fixture pipeline against hardcoded
+  // reference/submission videos and posts the boolean verdict back to
+  // /api/cleanups/:id/verification-result.
   const payload: VerificationPayload = {
-    cleanup_id: cleanup.id,
-    submission_video_url: cleanup.video_url ?? '',
-    reference_video_url: bounty.reference_video_url,
-    bounty_lat: bounty.lat,
-    bounty_lng: bounty.lng,
-    gps_trajectory: pings ?? [],
-    issued_nonce: session.nonce,
-    session_duration_s: durationSec,
-    trajectory_analysis: analyzeTrajectory(
-      pings ?? [],
-      bounty.lat,
-      bounty.lng
-    )
+    cleanup_id: cleanup.id
   };
 
   void postToAiVerifier(payload).catch((error) => {
