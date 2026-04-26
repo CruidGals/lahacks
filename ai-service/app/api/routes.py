@@ -67,6 +67,15 @@ class SpecCandidatesRequest(BaseModel):
 
 class Stage2Request(BaseModel):
     """Body for ``POST /pipelines/submission/verify``.
+
+    Stage 2 entry point. The submission video is analysed against the
+    confirmed :class:`GroundTruthSpec` to produce a :class:`Stage2Result`.
+    """
+
+    submission_video_url: str
+    spec: GroundTruthSpec
+
+
 class XpPipelineRequest(BaseModel):
     """Body for ``POST /pipelines/xp``.
 
@@ -80,16 +89,6 @@ class XpPipelineRequest(BaseModel):
     reward_sol: float | None = None
     lat: float | None = None
     lng: float | None = None
-
-
-# --- Endpoints ------------------------------------------------------------ #
-
-    Stage 2 entry point. The submission video is analysed against the
-    confirmed :class:`GroundTruthSpec` to produce a :class:`Stage2Result`.
-    """
-
-    submission_video_url: str
-    spec: GroundTruthSpec
 
 
 # --- Endpoints ------------------------------------------------------------ #
@@ -216,6 +215,8 @@ async def run_submission_verify(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.post(
     "/xp",
     response_model=XpReward,
