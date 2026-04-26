@@ -4,7 +4,7 @@ import { Keypair } from '@solana/web3.js';
 import { signRequest } from '@worldcoin/idkit-core/signing';
 import type { MiniAppWalletAuthSuccessPayload } from '@worldcoin/minikit-js/commands';
 import { verifySiweMessage } from '@worldcoin/minikit-js/siwe';
-import { isAddress } from 'viem';
+import { getAddress, isAddress } from 'viem';
 import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser } from '../lib/auth.js';
@@ -165,8 +165,6 @@ usersRouter.post('/world/rp-context', async (req, res) => {
     action
   });
 
-
-  console.log('sig', sig);
   res.json({
     app_id: appId,
     action,
@@ -312,7 +310,14 @@ usersRouter.post('/verify', async (req, res) => {
 
   let worldIdHash = parsed.data.world_id_hash ?? `dev_${user.id}_${Date.now().toString(36)}`;
 
-  if (parsed.data.idkit_response) {
+  // Dev-only bypass: useful when you're iterating on the rest of the app and
+  // don't have a fully-wired Worldcoin RP. Gated on both env vars so it can
+  // never leak into a production deploy.
+  const bypassEnabled =
+    process.env.NODE_ENV !== 'production' &&
+    process.env.BYPASS_VERIFICATION_FOR_TESTING === 'true';
+
+  if (parsed.data.idkit_response && !bypassEnabled) {
     const rpId = (parsed.data.rp_id ?? process.env.WORLD_RP_ID)?.trim();
     if (!rpId) {
       res.status(503).json({ error: 'WORLD_RP_ID is required for IDKit verification.' });
@@ -333,12 +338,29 @@ usersRouter.post('/verify', async (req, res) => {
       headers,
       body: JSON.stringify(parsed.data.idkit_response)
     });
-    const verifyJson = (await verifyRes.json().catch(() => null)) as VerifyV4Response | null;
+    const verifyText = await verifyRes.text();
+    let verifyJson: VerifyV4Response | null = null;
+    try {
+      verifyJson = JSON.parse(verifyText) as VerifyV4Response;
+    } catch {
+      verifyJson = null;
+    }
 
     if (!verifyRes.ok || !verifyJson?.success) {
+      console.error('world_id_verify_failed', {
+        url: worldVerifyUrl,
+        status: verifyRes.status,
+        body: verifyText.slice(0, 1000),
+        sent_keys: Object.keys(parsed.data.idkit_response ?? {}),
+        sent_protocol_version: (parsed.data.idkit_response as Record<string, unknown> | undefined)
+          ?.protocol_version,
+        sent_environment: (parsed.data.idkit_response as Record<string, unknown> | undefined)
+          ?.environment,
+        sent_action: (parsed.data.idkit_response as Record<string, unknown> | undefined)?.action
+      });
       res.status(400).json({
         error: 'World ID proof verification failed.',
-        details: verifyJson ?? null
+        details: verifyJson ?? { raw: verifyText.slice(0, 500) }
       });
       return;
     }
@@ -346,6 +368,28 @@ usersRouter.post('/verify', async (req, res) => {
     worldIdHash =
       extractNullifierMarker(parsed.data.idkit_response) ??
       `world_${user.id}_${Date.now().toString(36)}`;
+  } else if (parsed.data.idkit_response && bypassEnabled) {
+    console.warn(
+      'BYPASS_VERIFICATION_FOR_TESTING is enabled — accepting World ID proof without remote verification. Disable in production.'
+    );
+    worldIdHash =
+      extractNullifierMarker(parsed.data.idkit_response) ??
+      `bypass_${user.id}_${Date.now().toString(36)}`;
+  }
+
+  const { data: hashTaken } = await supabase
+    .from('users')
+    .select('id')
+    .eq('world_id_hash', worldIdHash)
+    .neq('id', user.id)
+    .maybeSingle();
+
+  if (hashTaken) {
+    res.status(409).json({
+      error:
+        'This World ID is already linked to another account. Use that account or clear the duplicate in the database.'
+    });
+    return;
   }
 
   const { data: updated, error } = await supabase
@@ -358,7 +402,18 @@ usersRouter.post('/verify', async (req, res) => {
     .select('*')
     .single();
 
-  if (error || !updated) {
+  if (error) {
+    if (error.code === '23505') {
+      res.status(409).json({
+        error:
+          'This World ID is already linked to another account (unique constraint).'
+      });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to store World ID verification.' });
+    return;
+  }
+  if (!updated) {
     res.status(500).json({ error: 'Failed to store World ID verification.' });
     return;
   }
@@ -429,9 +484,35 @@ usersRouter.post('/wallet/complete', async (req, res) => {
     return;
   }
 
-  const address = verification.siweMessageData.address;
-  if (!address || !isAddress(address)) {
+  const rawAddress = verification.siweMessageData.address;
+  if (!rawAddress || !isAddress(rawAddress)) {
     res.status(400).json({ error: 'SIWE returned an invalid address.' });
+    return;
+  }
+
+  let address: string;
+  try {
+    address = getAddress(rawAddress);
+  } catch {
+    res.status(400).json({ error: 'SIWE returned an invalid address.' });
+    return;
+  }
+
+  const { data: otherWallets } = await supabase
+    .from('users')
+    .select('id, world_address')
+    .neq('id', user.id)
+    .not('world_address', 'is', null);
+
+  const addrTaken = otherWallets?.find(
+    (row) => row.world_address?.toLowerCase() === address.toLowerCase()
+  );
+
+  if (addrTaken) {
+    res.status(409).json({
+      error:
+        'This World App wallet is already linked to another account. Sign in with the original account or remove the duplicate link.'
+    });
     return;
   }
 
@@ -444,7 +525,18 @@ usersRouter.post('/wallet/complete', async (req, res) => {
     .select('*')
     .single();
 
-  if (error || !updated) {
+  if (error) {
+    if (error.code === '23505') {
+      res.status(409).json({
+        error:
+          'This World App wallet is already linked to another account (unique constraint).'
+      });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to persist world address.' });
+    return;
+  }
+  if (!updated) {
     res.status(500).json({ error: 'Failed to persist world address.' });
     return;
   }
