@@ -34,6 +34,44 @@ function pinSizeForReward(reward: number): number {
   return 36;
 }
 
+/**
+ * Pin label + sizing weight that abstracts over reward type so a 1 WLD
+ * bounty doesn't render as a tiny "0" pin (which is what happened before
+ * the WLD reward type existed). The size is driven by a SOL-equivalent of
+ * the on-chain value -- not a price oracle, just a visual hierarchy. The
+ * label uses the reward type's native unit so the user can read it.
+ */
+function pinLabelAndSize(b: Bounty): { label: string; size: number } {
+  if (b.reward_type === "wld") {
+    // 1 WLD ~= 0.05 SOL of "size weight"; matches the urgency heuristic
+    // used server-side. The label drops the trailing zeros for clean
+    // numbers ("1", "0.5") instead of "1.0", "0.50".
+    const sizeWeight = b.reward_wld * 0.05;
+    const value = b.reward_wld;
+    const label =
+      value >= 10
+        ? Math.round(value).toString()
+        : value >= 1
+          ? value.toFixed(1).replace(/\.0$/, "")
+          : value.toFixed(2).replace(/^0/, "");
+    return { label, size: pinSizeForReward(sizeWeight) };
+  }
+  if (b.reward_type === "xp") {
+    // XP bounties: render the staked XP as a "k" / raw number.
+    const xp = b.reward_xp ?? b.xp_award ?? 0;
+    const sizeWeight = xp / 2_000;
+    const label =
+      xp >= 1000 ? `${Math.round(xp / 100) / 10}k` : Math.round(xp).toString();
+    return { label, size: pinSizeForReward(sizeWeight) };
+  }
+  // SOL fallback (legacy default).
+  const label =
+    b.reward_sol >= 1
+      ? b.reward_sol.toFixed(1)
+      : b.reward_sol.toFixed(2).replace(/^0/, "");
+  return { label, size: pinSizeForReward(b.reward_sol) };
+}
+
 // Pixels the .bounty-pin::after triangle protrudes below the icon wrapper's
 // bottom edge. MUST match the offsets baked into .bounty-pin::after in
 // globals.css — if they diverge the pin will drift on zoom.
@@ -41,9 +79,8 @@ const TAIL_PROTRUSION_PX = 6;
 
 function makeBountyIcon(b: Bounty): L.DivIcon {
   const color = STATUS_COLOR[b.status];
-  const size = pinSizeForReward(b.reward_sol);
+  const { label, size } = pinLabelAndSize(b);
   const fontSize = size >= 48 ? 12 : 11;
-  const label = b.reward_sol >= 1 ? b.reward_sol.toFixed(1) : b.reward_sol.toFixed(2).replace(/^0/, "");
   return L.divIcon({
     className: "",
     iconSize: [size, size],

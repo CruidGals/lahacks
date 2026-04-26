@@ -18,13 +18,20 @@ import {
   FireIcon,
   LeafIcon,
   LocationIcon,
+  WorldcoinIcon,
 } from "../_components/icons";
 import { useGeolocation } from "../../lib/useGeolocation";
 import { DEFAULT_LOCATION } from "../../lib/mock-data";
 import { getMe, postBounty, uploadFixtureVideo } from "../../lib/api";
 import type { Bounty, BountyCategory, RewardType } from "../../lib/types";
 import { useToast } from "../_components/Toast";
-import { categoryLabel, formatUsd, formatReward, formatXp } from "../../lib/format";
+import {
+  categoryLabel,
+  formatUsd,
+  formatReward,
+  formatWld,
+  formatXp,
+} from "../../lib/format";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -38,8 +45,13 @@ const CATEGORIES: { id: BountyCategory; emoji: string; label: string }[] = [
 
 const REWARD_QUICK = [0.05, 0.1, 0.2, 0.35, 0.5];
 const XP_QUICK = [25, 50, 100, 200, 500];
+const WLD_QUICK = [0.1, 0.5, 1, 2, 5];
 const MIN_XP_STAKE = 5;
 const MAX_XP_STAKE = 5000;
+// Mirror MIN_WLD_REWARD / MAX_WLD_REWARD on the backend; if you change one,
+// change the other in lockstep.
+const MIN_WLD_REWARD = 0.01;
+const MAX_WLD_REWARD = 50;
 
 export default function PostBountyPage() {
   const router = useRouter();
@@ -54,7 +66,9 @@ export default function PostBountyPage() {
   const [rewardType, setRewardType] = useState<RewardType>("sol");
   const [reward, setReward] = useState<string>("0.20");
   const [xpStake, setXpStake] = useState<string>("100");
+  const [wldStake, setWldStake] = useState<string>("1.00");
   const [userXpBalance, setUserXpBalance] = useState<number | null>(null);
+  const [insideWorldApp, setInsideWorldApp] = useState<boolean>(false);
   const [referenceBlob, setReferenceBlob] = useState<Blob | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -76,18 +90,50 @@ export default function PostBountyPage() {
 
   const rewardNum = parseFloat(reward);
   const xpNum = Math.round(parseFloat(xpStake));
+  const wldNum = parseFloat(wldStake);
   const usdEstimate = isFinite(rewardNum) ? Math.round(rewardNum * 153) : 0;
+  // Rough WLD->USD; matches WLD_USD_RATE in lib/api.ts. Used for UX hints
+  // only, not for any value transfer.
+  const wldUsdEstimate = isFinite(wldNum) ? Math.round(wldNum * 2.5) : 0;
   const solRewardOk = rewardType === "sol" && rewardNum > 0;
   const xpStakeOk =
     rewardType === "xp" &&
     Number.isFinite(xpNum) &&
     xpNum >= MIN_XP_STAKE &&
     xpNum <= MAX_XP_STAKE;
+  const wldStakeOk =
+    rewardType === "wld" &&
+    Number.isFinite(wldNum) &&
+    wldNum >= MIN_WLD_REWARD &&
+    wldNum <= MAX_WLD_REWARD;
 
   useEffect(() => {
     getMe()
       .then((u) => setUserXpBalance(u.xp))
       .catch(() => setUserXpBalance(null));
+  }, []);
+
+  // Detect MiniKit on mount so we can disable the WLD tab outside World App
+  // and keep the user from getting deep into the flow before discovering
+  // they need to switch contexts. The dynamic import keeps SSR safe.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const mod = await import("../../lib/world");
+        if (cancelled) return;
+        const inside = await mod.isInsideWorldApp();
+        setInsideWorldApp(inside);
+        // Best-effort wallet sync so /api/users/me has the recipient address
+        // on file before the user posts (also helps when they later claim).
+        if (inside) await mod.syncWorldWalletAddress();
+      } catch {
+        if (!cancelled) setInsideWorldApp(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const canNext = useMemo(() => {
@@ -97,11 +143,22 @@ export default function PostBountyPage() {
         title.trim().length >= 4 &&
         description.trim().length >= 8;
       if (rewardType === "sol") return base && solRewardOk;
+      if (rewardType === "wld") return base && wldStakeOk && insideWorldApp;
       return base && xpStakeOk;
     }
     if (step === 3) return referenceBlob !== null;
     return true;
-  }, [step, title, description, referenceBlob, rewardType, solRewardOk, xpStakeOk]);
+  }, [
+    step,
+    title,
+    description,
+    referenceBlob,
+    rewardType,
+    solRewardOk,
+    xpStakeOk,
+    wldStakeOk,
+    insideWorldApp,
+  ]);
 
   const onSubmit = async () => {
     if (!referenceBlob) {
@@ -131,6 +188,10 @@ export default function PostBountyPage() {
         reference_thumbnail_url: null,
       } as const;
 
+      // The WLD branch detours through MiniKit *inside* `postBounty()` so
+      // we don't need to thread the SDK call through this component. If
+      // we're not inside World App, postBounty surfaces a typed error we
+      // can map to a friendly toast below.
       const result = await postBounty(
         rewardType === "sol"
           ? {
@@ -138,17 +199,30 @@ export default function PostBountyPage() {
               reward_type: "sol" as const,
               reward_sol: rewardNum,
             }
-          : {
-              ...common,
-              reward_type: "xp" as const,
-              reward_xp: xpNum,
-            }
+          : rewardType === "wld"
+            ? {
+                ...common,
+                reward_type: "wld" as const,
+                reward_wld: wldNum,
+              }
+            : {
+                ...common,
+                reward_type: "xp" as const,
+                reward_xp: xpNum,
+              }
       );
       setCreated(result.bounty);
       if (result.bounty.reward_type === "xp") {
         toast(`${formatReward(result.bounty)} staked from your balance`, {
           variant: "success",
           description: "Your XP bounty is live on the map.",
+        });
+      } else if (result.bounty.reward_type === "wld") {
+        toast(`${formatWld(wldNum)} escrowed via World App`, {
+          variant: "success",
+          description: result.world_pay_tx_hash
+            ? `Tx ${result.world_pay_tx_hash.slice(0, 10)}…`
+            : "Your bounty is live on the map.",
         });
       } else {
         toast(`${rewardNum.toFixed(2)} SOL escrowed`, {
@@ -160,10 +234,30 @@ export default function PostBountyPage() {
         .then((u) => setUserXpBalance(u.xp))
         .catch(() => {});
     } catch (err) {
-      toast("Couldn't post bounty", {
-        variant: "error",
-        description: err instanceof Error ? err.message : undefined,
-      });
+      // Map the typed errors from `lib/world.ts` to user-friendly copy.
+      // The class names are checked by string so we don't have to import
+      // the class in this server-component-eligible file.
+      const errName =
+        err instanceof Error
+          ? (err as { name?: string }).name ?? ""
+          : "";
+      if (errName === "OutsideWorldAppError") {
+        toast("Open this page inside World App", {
+          variant: "error",
+          description:
+            "WLD bounties require signing inside World App. SOL or XP work in any browser.",
+        });
+      } else if (errName === "WorldPayUserCancelledError") {
+        toast("Payment cancelled", {
+          variant: "info",
+          description: "No bounty was created. You can try again.",
+        });
+      } else {
+        toast("Couldn't post bounty", {
+          variant: "error",
+          description: err instanceof Error ? err.message : undefined,
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -256,8 +350,12 @@ export default function PostBountyPage() {
             setReward={setReward}
             xpStake={xpStake}
             setXpStake={setXpStake}
+            wldStake={wldStake}
+            setWldStake={setWldStake}
             usdEstimate={usdEstimate}
+            wldUsdEstimate={wldUsdEstimate}
             userXpBalance={userXpBalance}
+            insideWorldApp={insideWorldApp}
           />
         )}
         {step === 3 && (
@@ -274,7 +372,9 @@ export default function PostBountyPage() {
             rewardType={rewardType}
             rewardSol={rewardNum}
             rewardXp={xpNum}
+            rewardWld={wldNum}
             usdEstimate={usdEstimate}
+            wldUsdEstimate={wldUsdEstimate}
             category={category}
             pinPos={pinPos}
           />
@@ -315,7 +415,9 @@ export default function PostBountyPage() {
             >
               {rewardType === "sol"
                 ? `Escrow ${rewardNum.toFixed(2)} SOL & post`
-                : `Stake ${formatXp(xpNum)} & post`}
+                : rewardType === "wld"
+                  ? `Pay ${formatWld(wldNum)} via World App & post`
+                  : `Stake ${formatXp(xpNum)} & post`}
             </Button>
           )}
         </div>
@@ -437,8 +539,12 @@ function StepDetails({
   setReward,
   xpStake,
   setXpStake,
+  wldStake,
+  setWldStake,
   usdEstimate,
+  wldUsdEstimate,
   userXpBalance,
+  insideWorldApp,
 }: {
   category: BountyCategory;
   setCategory: (c: BountyCategory) => void;
@@ -452,10 +558,15 @@ function StepDetails({
   setReward: (s: string) => void;
   xpStake: string;
   setXpStake: (s: string) => void;
+  wldStake: string;
+  setWldStake: (s: string) => void;
   usdEstimate: number;
+  wldUsdEstimate: number;
   userXpBalance: number | null;
+  insideWorldApp: boolean;
 }) {
   const xpParsed = Math.round(parseFloat(xpStake));
+  const wldParsed = parseFloat(wldStake);
   return (
     <div className="flex-1 px-4 pt-3 pb-6 space-y-5">
       <div>
@@ -507,7 +618,13 @@ function StepDetails({
 
       <FieldGroup
         label="Reward type"
-        hint={rewardType === "sol" ? `~${formatUsd(usdEstimate)}` : "No crypto needed"}
+        hint={
+          rewardType === "sol"
+            ? `~${formatUsd(usdEstimate)}`
+            : rewardType === "wld"
+              ? `~${formatUsd(wldUsdEstimate)}`
+              : "No crypto needed"
+        }
       >
         <div className="flex gap-1.5 p-1 bg-[color:var(--color-surface)] rounded-full">
           <button
@@ -520,6 +637,17 @@ function StepDetails({
             }`}
           >
             Solana
+          </button>
+          <button
+            type="button"
+            onClick={() => setRewardType("wld")}
+            className={`flex-1 h-10 text-sm font-semibold rounded-full transition-colors ${
+              rewardType === "wld"
+                ? "bg-white text-[color:var(--color-ink)] shadow-[var(--shadow-card)]"
+                : "text-[color:var(--color-muted)]"
+            }`}
+          >
+            WLD
           </button>
           <button
             type="button"
@@ -567,6 +695,63 @@ function StepDetails({
                 </button>
               ))}
             </div>
+          </div>
+        ) : rewardType === "wld" ? (
+          <div className="mt-3">
+            <div className="relative">
+              <input
+                type="number"
+                inputMode="decimal"
+                min={MIN_WLD_REWARD}
+                max={MAX_WLD_REWARD}
+                step="0.01"
+                value={wldStake}
+                onChange={(e) => setWldStake(e.target.value)}
+                className="w-full h-14 pl-12 pr-16 bg-[color:var(--color-surface)] rounded-[14px] text-[22px] font-semibold tabular outline-none focus:bg-white focus:ring-2 focus:ring-[color:var(--color-brand-500)] transition-all"
+              />
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[color:var(--color-brand-600)]">
+                <WorldcoinIcon width={20} height={20} />
+              </span>
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-[color:var(--color-muted)]">
+                WLD
+              </span>
+            </div>
+            {/* Outside-World-App banner. We deliberately leave the input
+               * editable so the user can preview the amount, but the
+               * Continue button stays disabled until MiniKit is ready. */}
+            {!insideWorldApp ? (
+              <p className="text-[11px] text-red-600 mt-1.5">
+                Open this page inside <span className="font-semibold">World App</span> to escrow WLD. The
+                Solana and XP options work in any browser.
+              </p>
+            ) : (
+              <p className="text-[11px] text-[color:var(--color-muted)] mt-1.5">
+                You&rsquo;ll sign one payment to the bounty vault inside World App. Refundable if the
+                cleanup is rejected.
+              </p>
+            )}
+            <p className="text-[11px] text-[color:var(--color-muted)] mt-1">
+              Stake {MIN_WLD_REWARD}–{MAX_WLD_REWARD} WLD. Gas is sponsored by World App for verified
+              users.
+            </p>
+            <div className="flex gap-1.5 mt-2 overflow-x-auto scroll-clean">
+              {WLD_QUICK.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => setWldStake(q.toFixed(2))}
+                  className="px-3 h-8 text-xs font-medium rounded-full border border-[color:var(--color-border)] bg-white hover:bg-[color:var(--color-surface)] tabular shrink-0"
+                >
+                  {q < 1 ? q.toFixed(2) : q.toFixed(0)} WLD
+                </button>
+              ))}
+            </div>
+            {!Number.isNaN(wldParsed) &&
+              (wldParsed < MIN_WLD_REWARD || wldParsed > MAX_WLD_REWARD) && (
+                <p className="text-[11px] text-red-600 mt-1">
+                  WLD reward must be between {MIN_WLD_REWARD} and {MAX_WLD_REWARD}.
+                </p>
+              )}
           </div>
         ) : (
           <div className="mt-3">
@@ -709,7 +894,9 @@ function StepReview({
   rewardType,
   rewardSol,
   rewardXp,
+  rewardWld,
   usdEstimate,
+  wldUsdEstimate,
   category,
   pinPos,
 }: {
@@ -718,21 +905,26 @@ function StepReview({
   rewardType: RewardType;
   rewardSol: number;
   rewardXp: number;
+  rewardWld: number;
   usdEstimate: number;
+  wldUsdEstimate: number;
   category: BountyCategory;
   pinPos: { lat: number; lng: number };
 }) {
   const isSol = rewardType === "sol";
+  const isWld = rewardType === "wld";
   return (
     <div className="flex-1 px-4 pt-3 pb-6 space-y-4">
       <div>
         <h2 className="text-[22px] font-semibold tracking-tight leading-tight">
-          {isSol ? "Review & escrow" : "Review & stake"}
+          {isSol || isWld ? "Review & escrow" : "Review & stake"}
         </h2>
         <p className="text-sm text-[color:var(--color-muted)] mt-1">
           {isSol
             ? "Funds stay in the smart contract until verification passes. You can cancel any time before claim."
-            : "XP is taken from your balance and paid to the claimer when verification passes."}
+            : isWld
+              ? "You'll sign one payment in World App to the bounty vault. The vault auto-releases on a verified cleanup or refunds you if rejected."
+              : "XP is taken from your balance and paid to the claimer when verification passes."}
         </p>
       </div>
 
@@ -753,6 +945,10 @@ function StepReview({
               <>
                 <CoinIcon width={16} height={16} /> {rewardSol.toFixed(2)} SOL
               </>
+            ) : isWld ? (
+              <>
+                <WorldcoinIcon width={16} height={16} /> {formatWld(rewardWld)}
+              </>
             ) : (
               <>
                 <FireIcon width={16} height={16} /> {formatXp(rewardXp)}
@@ -764,20 +960,33 @@ function StepReview({
 
       <Card className="p-4 grid gap-2">
         {isSol && <Row label="Network fee" value="~$0.001" />}
+        {isWld && <Row label="Network fee" value="Sponsored by World App" />}
         <Row label="Verification" value="AI + sensor multi-check" />
-        {isSol ? (
+        {isSol && (
           <Row label="Auto-refund" value="Bounty refunds if unclaimed in 7d" />
-        ) : (
+        )}
+        {isWld && (
+          <Row label="If rejected" value="Vault refunds WLD to you on World Chain" />
+        )}
+        {!isSol && !isWld && (
           <Row label="If rejected" value="Staked XP returns to you" />
         )}
         <div className="border-t border-[color:var(--color-border)] mt-1" />
-        {isSol ? (
+        {isSol && (
           <Row
             label="Total escrow"
             value={`${rewardSol.toFixed(2)} SOL · ~${formatUsd(usdEstimate)}`}
             bold
           />
-        ) : (
+        )}
+        {isWld && (
+          <Row
+            label="Total escrow"
+            value={`${formatWld(rewardWld)} · ~${formatUsd(wldUsdEstimate)}`}
+            bold
+          />
+        )}
+        {!isSol && !isWld && (
           <Row label="Staked" value={formatXp(rewardXp)} bold />
         )}
       </Card>
@@ -858,6 +1067,11 @@ function PostedSuccess({
         {bounty.reward_type === "xp" ? (
           <>
             {formatReward(bounty)} is staked from your balance. The claimer pool is being notified.
+          </>
+        ) : bounty.reward_type === "wld" ? (
+          <>
+            {formatReward(bounty)} is escrowed in the World Chain vault. The claimer pool is being
+            notified.
           </>
         ) : (
           <>

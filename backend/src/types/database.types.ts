@@ -30,9 +30,13 @@ export type Database = {
           reference_video_url: string | null
           reward_lamports: number
           reward_type: Database["public"]["Enums"]["reward_type"]
+          reward_wld_wei: string | null
           reward_xp: number | null
           status: Database["public"]["Enums"]["bounty_status"] | null
           title: string | null
+          world_pay_tx_hash: string | null
+          world_pay_tx_id: string | null
+          world_payment_reference: string | null
           xp_award: number
           xp_reasoning: string | null
         }
@@ -51,9 +55,13 @@ export type Database = {
           reference_video_url?: string | null
           reward_lamports?: number
           reward_type?: Database["public"]["Enums"]["reward_type"]
+          reward_wld_wei?: string | null
           reward_xp?: number | null
           status?: Database["public"]["Enums"]["bounty_status"] | null
           title?: string | null
+          world_pay_tx_hash?: string | null
+          world_pay_tx_id?: string | null
+          world_payment_reference?: string | null
           xp_award?: number
           xp_reasoning?: string | null
         }
@@ -72,9 +80,13 @@ export type Database = {
           reference_video_url?: string | null
           reward_lamports?: number
           reward_type?: Database["public"]["Enums"]["reward_type"]
+          reward_wld_wei?: string | null
           reward_xp?: number | null
           status?: Database["public"]["Enums"]["bounty_status"] | null
           title?: string | null
+          world_pay_tx_hash?: string | null
+          world_pay_tx_id?: string | null
+          world_payment_reference?: string | null
           xp_award?: number
           xp_reasoning?: string | null
         }
@@ -229,10 +241,12 @@ export type Database = {
           display_name: string | null
           id: string
           total_earned_lamports: number
+          total_earned_wld_wei: string
           total_earned_xp: number
           verified: boolean | null
           wallet_address: string
           world_id_hash: string | null
+          world_wallet_address: string | null
           xp: number
         }
         Insert: {
@@ -240,10 +254,12 @@ export type Database = {
           display_name?: string | null
           id?: string
           total_earned_lamports?: number
+          total_earned_wld_wei?: string
           total_earned_xp?: number
           verified?: boolean | null
           wallet_address: string
           world_id_hash?: string | null
+          world_wallet_address?: string | null
           xp?: number
         }
         Update: {
@@ -251,10 +267,12 @@ export type Database = {
           display_name?: string | null
           id?: string
           total_earned_lamports?: number
+          total_earned_wld_wei?: string
           total_earned_xp?: number
           verified?: boolean | null
           wallet_address?: string
           world_id_hash?: string | null
+          world_wallet_address?: string | null
           xp?: number
         }
         Relationships: []
@@ -267,6 +285,10 @@ export type Database = {
       add_earned_lamports: {
         Args: { p_user_id: string; p_lamports: number }
         Returns: number
+      }
+      add_earned_wld_wei: {
+        Args: { p_user_id: string; p_wei: string }
+        Returns: string
       }
       award_xp: {
         Args: { p_user_id: string; p_amount: number }
@@ -284,7 +306,7 @@ export type Database = {
     Enums: {
       bounty_status: "open" | "claimed" | "completed" | "expired"
       cleanup_status: "pending" | "verified" | "rejected"
-      reward_type: "sol" | "xp"
+      reward_type: "sol" | "xp" | "wld"
       session_status: "active" | "completed" | "cancelled"
     }
     CompositeTypes: {
@@ -415,7 +437,7 @@ export const Constants = {
     Enums: {
       bounty_status: ["open", "claimed", "completed", "expired"],
       cleanup_status: ["pending", "verified", "rejected"],
-      reward_type: ["sol", "xp"],
+      reward_type: ["sol", "xp", "wld"],
       session_status: ["active", "completed", "cancelled"],
     },
   },

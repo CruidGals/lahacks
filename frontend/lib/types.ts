@@ -13,7 +13,7 @@ export type BountyCategory =
   | "beach"
   | "other";
 
-export type RewardType = "sol" | "xp";
+export type RewardType = "sol" | "xp" | "wld";
 
 export type Bounty = {
   id: string;
@@ -25,6 +25,12 @@ export type Bounty = {
   reward_type: RewardType;
   reward_sol: number;
   reward_xp: number | null;
+  /** Human-readable WLD amount (0 for non-WLD bounties). Wei lives in
+   *  reward_wld_wei when precision matters. */
+  reward_wld: number;
+  /** Canonical wei amount as decimal string (matches Postgres TEXT column).
+   *  null for non-WLD bounties. */
+  reward_wld_wei: string | null;
   xp_award: number;
   difficulty_score: number | null;
   importance_score: number | null;
@@ -72,15 +78,20 @@ export type User = {
   xp: number;
   total_earned_xp: number;
   total_earned_sol: number;
+  total_earned_wld: number;
   total_completed: number;
   current_streak: number;
   wallet: { address: string; balance_sol: number };
+  /** EIP-55 World Chain wallet read from `MiniKit.user.walletAddress`.
+   *  null until the app boots inside World App at least once. */
+  world_wallet_address: string | null;
   recent_completed: Array<{
     bounty_id: string;
     title: string;
     reward_type: RewardType;
     reward_sol: number;
     reward_xp: number | null;
+    reward_wld: number;
     xp_award: number;
     completed_at: string;
   }>;

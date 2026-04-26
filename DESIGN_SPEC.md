@@ -65,7 +65,7 @@ flowchart LR
 | Verification service | Python FastAPI, async orchestration, fraud aggregator, callback client | Person 3B |
 | Identity | World ID via MiniKit (preferred) or IDKit (fallback) | Person 4 |
 | Design | Figma (component library + clickable prototype) | Person 4 |
-| Payments | Solana (devnet for demo, mainnet-ready) | Person 2 |
+| Payments | Solana (devnet for demo, mainnet-ready) **and** World Chain WLD (mainnet only — World docs forbid testnet/simulator paths for `MiniKit.pay()`) | Person 2 |
 
 ```mermaid
 flowchart TB

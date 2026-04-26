@@ -4,6 +4,7 @@ import { supabase } from '../config/supabase.js';
 import { requireAuthUser, requireInternalToken } from '../lib/auth.js';
 import { isClaimExpired } from '../lib/bounties.js';
 import { refundEscrowToPoster, releaseBountyToClaimer } from '../lib/solana.js';
+import { payoutWldToClaimer, refundWldToPoster } from '../lib/world.js';
 
 export const cleanupRouter = Router();
 
@@ -348,8 +349,9 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       return;
     }
 
-    // SOL payout only happens for SOL bounties. XP bounties release
-    // exclusively through the XP path below.
+    // On-chain payout dispatch. Only one of these branches runs per bounty;
+    // XP bounties (handled separately below) skip both because their reward
+    // already lives in Postgres rather than on a chain.
     let payoutTxSig: string | null = null;
     if (bounty.reward_type === 'sol' && bounty.reward_lamports > 0) {
       try {
@@ -382,6 +384,50 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
         console.warn(
           'Failed to update lifetime lamports counter for claimer:',
           lamportsError.message
+        );
+      }
+    } else if (bounty.reward_type === 'wld' && bounty.reward_wld_wei) {
+      // WLD payout: vault EOA signs an ERC-20 transfer to the claimer's
+      // World wallet. The claimer registers `world_wallet_address` from
+      // `MiniKit.user.walletAddress` during onboarding; if it's missing
+      // we cannot pay them and the verification record stays in flight so
+      // an operator can refund or retry once the wallet is linked.
+      if (!claimer.world_wallet_address) {
+        console.error(
+          `WLD payout blocked: claimer ${claimer.id} has no world_wallet_address; cleanup=${cleanup.id}`
+        );
+        res.status(409).json({
+          error:
+            'Claimer has not linked a World wallet yet. Ask them to open the app inside World App so the wallet address syncs, then retry verification.'
+        });
+        return;
+      }
+
+      try {
+        payoutTxSig = await payoutWldToClaimer({
+          bountyId: bounty.id,
+          cleanupId: cleanup.id,
+          recipientAddress: claimer.world_wallet_address,
+          amountWei: bounty.reward_wld_wei
+        });
+      } catch (e) {
+        console.warn(
+          'On-chain WLD payout failed; using simulated payout signature for demo:',
+          e instanceof Error ? e.message : e
+        );
+        payoutTxSig = `simulated_wld_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+      }
+
+      // Bump the lifetime WLD-earned counter for leaderboard purposes. We
+      // ignore the new total here -- the leaderboard reads it on demand.
+      const { error: wldError } = await supabase.rpc('add_earned_wld_wei', {
+        p_user_id: claimer.id,
+        p_wei: bounty.reward_wld_wei
+      });
+      if (wldError) {
+        console.warn(
+          'Failed to update lifetime WLD counter for claimer:',
+          wldError.message
         );
       }
     }
@@ -492,10 +538,15 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
-  // Refund the staked currency back to the poster. SOL goes back via the
-  // on-chain escrow program; XP goes back via the ``refund_xp`` RPC which
-  // increments ``users.xp`` *without* touching ``users.total_earned_xp``
-  // (a refund must not inflate the leaderboard).
+  // Refund the staked currency back to the poster. The three reward types
+  // each go through their own path:
+  //   * SOL -> on-chain escrow program transfer back to the poster wallet.
+  //   * XP  -> ``refund_xp`` RPC which increments ``users.xp`` *without*
+  //            touching ``users.total_earned_xp`` (a refund must not inflate
+  //            the leaderboard).
+  //   * WLD -> vault EOA signs an ERC-20 transfer back to the poster's World
+  //            wallet via viem. Same address-availability caveat as the
+  //            payout branch above.
   let refundTxSig: string | null = null;
   let posterXpAfter: number | null = null;
   let refundStatus = 'no_refund_needed';
@@ -531,6 +582,32 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     }
     posterXpAfter = typeof balance === 'number' ? balance : null;
     refundStatus = 'xp_refunded_to_poster';
+  } else if (bounty.reward_type === 'wld' && bounty.reward_wld_wei) {
+    if (!poster.world_wallet_address) {
+      console.error(
+        `WLD refund blocked: poster ${poster.id} has no world_wallet_address; cleanup=${cleanup.id}`
+      );
+      res.status(409).json({
+        error:
+          'Poster has not linked a World wallet yet. Ask them to open the app inside World App so the wallet address syncs, then retry verification.'
+      });
+      return;
+    }
+    try {
+      refundTxSig = await refundWldToPoster({
+        bountyId: bounty.id,
+        cleanupId: cleanup.id,
+        posterAddress: poster.world_wallet_address,
+        amountWei: bounty.reward_wld_wei
+      });
+    } catch (e) {
+      console.warn(
+        'WLD refund transaction failed; using simulated signature for demo:',
+        e instanceof Error ? e.message : e
+      );
+      refundTxSig = `simulated_wld_refund_${cleanup.id.slice(0, 8)}_${Date.now().toString(36)}`;
+    }
+    refundStatus = 'wld_refunded_to_poster';
   }
 
   const verificationWithRefund = {

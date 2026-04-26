@@ -1,6 +1,11 @@
-# Backend (Express + Supabase + Solana)
+# Backend (Express + Supabase + Solana + World)
 
-This service powers bounty lifecycle routes, session GPS tracking, cleanup verification callbacks, and Solana escrow/payout transfers.
+This service powers bounty lifecycle routes, session GPS tracking, cleanup verification callbacks, and on-chain escrow/payout transfers on **two** networks:
+
+- **Solana** (legacy SOL bounties; backend funder/vault keypair signs both escrow and payout)
+- **World Chain mainnet** (WLD bounties; the user signs `MiniKit.pay()` from World App for escrow, the backend vault signs ERC-20 transfers via viem for payouts/refunds)
+
+XP bounties live entirely off-chain in Postgres.
 
 ## Environment variables
 
@@ -23,6 +28,17 @@ Solana (devnet demo):
 - `SET_BOUNTY_WITH_FUNDER` (`true` or `false`)
 - `SOLANA_FUNDER_SECRET_KEY` (base58 byte array string, e.g. `"[1,2,...]"`)
 - `SOLANA_VAULT_SECRET_KEY` (base58 byte array string, e.g. `"[1,2,...]"`)
+
+World Chain / WLD bounties:
+
+- `WORLD_RPC_URL` (optional, defaults to `https://worldchain-mainnet.g.alchemy.com/public`)
+- `WORLD_VAULT_ADDRESS` (`0x...` EOA on World Chain mainnet that receives `MiniKit.pay()` escrow and signs payouts/refunds; **must** be allow-listed in the Developer Portal as the recipient when configuring `pay`)
+- `WORLD_VAULT_PRIVATE_KEY` (the matching private key for `WORLD_VAULT_ADDRESS`; viem signs ERC-20 transfers with it. Must hold both WLD for payouts AND ETH for gas)
+- `WLD_TOKEN_ADDRESS` (optional, defaults to canonical WLD `0x2cFc85d8E48F8EAB294be644d9E25C3030863003`)
+- `WORLD_DEVELOPER_API_KEY` (also used for IDKit; required to verify a user's `MiniKit.pay()` against `https://developer.worldcoin.org/api/v2/minikit/transaction/{id}` before the bounty record is created)
+- `WORLD_ID_APP_ID` (the `app_...` from the Developer Portal; passed as `?app_id=` query parameter to the verification API)
+
+> **Important:** there is **no testnet path** for `MiniKit.pay()`. Per the official [World docs FAQ](https://docs.world.org/mini-apps/more/faq#can-i-use-the-simulator-to-test-transactions-on-mini-apps), Mini App transactions must be developed on World Chain mainnet -- testnet/simulator routes are unsupported and will silently fail. Develop with real-but-small WLD amounts (sub-$1) on a dedicated dev vault.
 
 Verification service integration:
 
@@ -58,6 +74,25 @@ Two backend functions are implemented in `src/lib/solana.ts`:
 - On verification **failure**, `refundEscrowToPoster` sends the bounty lamports from the vault back to the **poster’s** `wallet_address`; the signature is stored inside `cleanups.verification_result` as `refund_tx_sig` (schema has no separate refund column).
 
 This provides a signed transaction audit trail in DB for lock, payout, and refund.
+
+## World Chain / WLD integration
+
+Implemented in `src/lib/world.ts` with helpers `verifyMiniKitPayment`, `payoutWldToClaimer`, and `refundWldToPoster`. Unlike SOL, the signing topology is split:
+
+- **Escrow** (poster funds the bounty):
+  - The frontend (inside World App only) calls `MiniKit.pay()` with `to: WORLD_VAULT_ADDRESS` and `tokens: [{ symbol: "WLD", token_amount: tokenToDecimals(amount, "WLD") }]`. World App signs and submits the transfer to the vault.
+  - The frontend POSTs the resulting `transactionId` + the client-generated `reference` to `POST /api/bounties` with `reward_wld`.
+  - The backend re-fetches the canonical record via `GET https://developer.worldcoin.org/api/v2/minikit/transaction/{id}?app_id=...&type=payment` (Bearer `WORLD_DEVELOPER_API_KEY`) and rejects unless **all** of:
+    - `transaction_status === "mined"`
+    - `reference` matches the one the client sent (replay defense)
+    - `to` matches `WORLD_VAULT_ADDRESS` (no spoofed recipient)
+    - `token === "WLD"` (no ABA-style token swaps)
+    - `token_amount` ≥ the wei equivalent of `reward_wld` (poster cannot underpay)
+  - On success, `bounties.world_pay_tx_id`, `bounties.world_payment_reference`, and `bounties.world_pay_tx_hash` are persisted; `bounties.escrow_tx_sig` mirrors the on-chain hash for legacy queries.
+- **Payout** (verification passes): `payoutWldToClaimer` uses viem with `WORLD_VAULT_PRIVATE_KEY` to sign a standard ERC-20 `transfer(to, amount)` of WLD on World Chain mainnet (chainId 480) to the claimer's `world_wallet_address`. The vault pays its own gas in ETH (Mini App gas sponsorship only applies to verified users **inside** World App, not to backend writers like us).
+- **Refund** (verification fails): `refundWldToPoster` is the same call shape as the payout, but to the poster's `world_wallet_address`. Both branches surface the on-chain hash on `cleanups.payout_tx_sig` (or inside `cleanups.verification_result.refund_tx_sig` for the failure path).
+
+The `users.world_wallet_address` column is populated from `MiniKit.user.walletAddress` either at registration or via `POST /api/users/me/world-wallet`. **WLD payouts are blocked with a 409** if the recipient has not linked a World wallet yet -- the verification stays in flight so an operator can resolve manually rather than the funds being permanently stuck.
 
 ## Verification callback idempotency
 

@@ -38,6 +38,8 @@ type BackendBounty = {
   reward_type: RewardType;
   reward_sol: number;
   reward_xp: number | null;
+  reward_wld: number;
+  reward_wld_wei: string | null;
   xp_award: number;
   difficulty_score: number | null;
   importance_score: number | null;
@@ -50,6 +52,7 @@ type BackendBounty = {
   created_at: string | null;
   claimed_at: string | null;
   escrow_tx_sig: string | null;
+  world_pay_tx_hash: string | null;
   poster?: {
     id: string;
     wallet_address: string;
@@ -84,15 +87,19 @@ type BackendUserMe = ApiUser & {
   total_earned_xp: number;
   total_earned_sol: number;
   total_earned_lamports: number;
+  total_earned_wld: number;
+  total_earned_wld_wei: string;
   total_completed: number;
   current_streak: number;
   wallet: { address: string; balance_sol: number };
+  world_wallet_address: string | null;
   recent_completed: Array<{
     bounty_id: string;
     title: string;
     reward_type: RewardType;
     reward_sol: number;
     reward_xp: number | null;
+    reward_wld: number;
     xp_award: number;
     completed_at: string;
   }>;
@@ -234,6 +241,11 @@ function addHours(iso: string | null, hours: number): string {
   return new Date(base + hours * 3600_000).toISOString();
 }
 
+// Rough USD-conversion factors used purely for sort/UX hints. Not a price
+// oracle -- both fluctuate. Keep these aligned (within an order of magnitude)
+// with the SOL_USD_RATE constant up top.
+const WLD_USD_RATE = 2.5;
+
 function mapBounty(b: BackendBounty): Bounty {
   const status: BountyStatus = b.status;
   const claimLockUntil = b.claimed_at
@@ -242,6 +254,16 @@ function mapBounty(b: BackendBounty): Bounty {
   const posterId = b.poster?.id ?? b.poster_id ?? "anon";
   const rewardType: RewardType = b.reward_type ?? "sol";
   const rewardSol = b.reward_sol ?? 0;
+  const rewardWld = b.reward_wld ?? 0;
+
+  // Pick the right currency for the USD estimate so the map cards never
+  // show "$0" for a 1 WLD bounty just because we forgot to branch here.
+  const usdEstimate =
+    rewardType === "sol"
+      ? Math.round(rewardSol * SOL_USD_RATE)
+      : rewardType === "wld"
+        ? Math.round(rewardWld * WLD_USD_RATE)
+        : 0;
 
   return {
     id: b.id,
@@ -253,10 +275,12 @@ function mapBounty(b: BackendBounty): Bounty {
     reward_type: rewardType,
     reward_sol: rewardSol,
     reward_xp: b.reward_xp ?? null,
+    reward_wld: rewardWld,
+    reward_wld_wei: b.reward_wld_wei ?? null,
     xp_award: b.xp_award ?? 0,
     difficulty_score: b.difficulty_score ?? null,
     importance_score: b.importance_score ?? null,
-    reward_usd_estimate: Math.round(rewardSol * SOL_USD_RATE),
+    reward_usd_estimate: usdEstimate,
     status,
     urgency_score: b.urgency_score ?? 0,
     category: deriveCategory(b.description),
@@ -304,8 +328,9 @@ export type PostBountyInput = {
   reference_video_url: string | null;
   reference_thumbnail_url: string | null;
 } & (
-  | { reward_type: "sol"; reward_sol: number; reward_xp?: undefined }
-  | { reward_type: "xp"; reward_xp: number; reward_sol?: undefined }
+  | { reward_type: "sol"; reward_sol: number; reward_xp?: undefined; reward_wld?: undefined }
+  | { reward_type: "xp"; reward_xp: number; reward_sol?: undefined; reward_wld?: undefined }
+  | { reward_type: "wld"; reward_wld: number; reward_sol?: undefined; reward_xp?: undefined }
 );
 
 export type XpEvaluation = {
@@ -319,6 +344,12 @@ export type XpEvaluation = {
 export type PostBountyResult = {
   bounty: Bounty;
   xp_evaluation: XpEvaluation;
+  /**
+   * For WLD bounties only: the on-chain transaction hash from the
+   * `MiniKit.pay()` -> vault transfer, after the backend has verified it
+   * against the Developer Portal. Null for SOL/XP bounties.
+   */
+  world_pay_tx_hash?: string | null;
 };
 
 export async function postBounty(
@@ -347,15 +378,42 @@ export async function postBounty(
     description,
     reference_video_url: input.reference_video_url ?? null,
   };
+
   if (input.reward_type === "sol") {
     body.reward_sol = input.reward_sol;
-  } else {
+  } else if (input.reward_type === "xp") {
     body.reward_xp = input.reward_xp;
+  } else {
+    // WLD path: must run inside World App. We sign `MiniKit.pay()` to the
+    // backend vault FIRST, get back a `transactionId` + `reference`, then
+    // POST to /api/bounties so the backend can verify the payment via the
+    // World Developer Portal before persisting. Doing the payment first
+    // gives us a consistent failure model: if MiniKit throws, no bounty
+    // record is ever created and the user has lost no funds.
+    //
+    // We dynamic-import the helper so SSR builds don't try to load
+    // `@worldcoin/minikit-js` at module-eval time.
+    const { payWldEscrow, syncWorldWalletAddress } = await import("./world");
+
+    // Best-effort: make sure the backend has the user's World wallet on
+    // file. The backend will need it for refunds if this bounty is later
+    // rejected, and at the latest by the next time *any* WLD bounty is
+    // posted by this user. Failure is non-fatal; we proceed.
+    void syncWorldWalletAddress();
+
+    const escrow = await payWldEscrow({
+      amountWld: input.reward_wld,
+      description: `Bounty: ${input.title.trim() || "Cleanup task"}`,
+    });
+    body.reward_wld = input.reward_wld;
+    body.world_pay_transaction_id = escrow.transactionId;
+    body.world_payment_reference = escrow.reference;
   }
 
   const json = await api<{
     bounty: BackendBounty;
     escrow_tx_sig: string | null;
+    world_pay_tx_hash?: string | null;
     xp_evaluation: XpEvaluation;
   }>("/api/bounties", {
     method: "POST",
@@ -365,6 +423,7 @@ export async function postBounty(
   return {
     bounty: mapBounty(json.bounty),
     xp_evaluation: json.xp_evaluation,
+    world_pay_tx_hash: json.world_pay_tx_hash ?? null,
   };
 }
 
@@ -714,18 +773,21 @@ export async function getMe(): Promise<User> {
     xp: u.xp ?? 0,
     total_earned_xp: u.total_earned_xp ?? 0,
     total_earned_sol: u.total_earned_sol,
+    total_earned_wld: u.total_earned_wld ?? 0,
     total_completed: u.total_completed,
     current_streak: u.current_streak,
     wallet: {
       address: u.wallet?.address ?? u.wallet_address,
       balance_sol: u.wallet?.balance_sol ?? u.total_earned_sol,
     },
+    world_wallet_address: u.world_wallet_address ?? null,
     recent_completed: (u.recent_completed ?? []).map((c) => ({
       bounty_id: c.bounty_id,
       title: c.title,
       reward_type: c.reward_type ?? "sol",
       reward_sol: c.reward_sol ?? 0,
       reward_xp: c.reward_xp ?? null,
+      reward_wld: c.reward_wld ?? 0,
       xp_award: c.xp_award ?? 0,
       completed_at: c.completed_at,
     })),

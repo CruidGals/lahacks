@@ -4,7 +4,9 @@ import { supabase } from '../config/supabase.js';
 import { calculateXpReward } from '../lib/aiXp.js';
 import { requireAuthUser } from '../lib/auth.js';
 import {
+  MAX_WLD_REWARD,
   MAX_XP_STAKE,
+  MIN_WLD_REWARD,
   MIN_XP_STAKE,
   computeClaimExpiry,
   computeUrgencyScore,
@@ -13,6 +15,7 @@ import {
   rewardSolToLamports
 } from '../lib/bounties.js';
 import { escrowBounty } from '../lib/solana.js';
+import { verifyMiniKitPayment, wldToWeiString } from '../lib/world.js';
 
 export const bountyRouter = Router();
 
@@ -22,18 +25,44 @@ const createBountySchema = z
     lng: z.number().min(-180).max(180),
     reward_sol: z.number().positive().optional(),
     reward_xp: z.number().int().min(MIN_XP_STAKE).max(MAX_XP_STAKE).optional(),
+    reward_wld: z.number().min(MIN_WLD_REWARD).max(MAX_WLD_REWARD).optional(),
+    // Required when `reward_wld` is set: the `transactionId` and `reference`
+    // returned by `MiniKit.pay()` on the device. The backend re-verifies the
+    // payment via the Developer Portal API before persisting the bounty, so
+    // the client cannot lie about either the amount or the recipient.
+    world_pay_transaction_id: z.string().min(1).max(256).optional(),
+    world_payment_reference: z.string().min(1).max(64).optional(),
     title: z.string().min(1).max(120).optional(),
     category: z.string().min(1).max(60).optional(),
     description: z.string().min(1).max(2000),
     reference_video_url: z.url().optional().nullable()
   })
   .refine(
-    (data) =>
-      (data.reward_sol !== undefined) !== (data.reward_xp !== undefined),
+    (data) => {
+      // Exactly-one-reward invariant. Counting `true` flags lets us detect
+      // both the under- and over-specified cases with one expression.
+      const provided = [
+        data.reward_sol !== undefined,
+        data.reward_xp !== undefined,
+        data.reward_wld !== undefined
+      ].filter(Boolean).length;
+      return provided === 1;
+    },
     {
       message:
-        'Exactly one of reward_sol or reward_xp must be provided.',
+        'Exactly one of reward_sol, reward_xp, or reward_wld must be provided.',
       path: ['reward_sol']
+    }
+  )
+  .refine(
+    (data) =>
+      data.reward_wld === undefined ||
+      (typeof data.world_pay_transaction_id === 'string' &&
+        typeof data.world_payment_reference === 'string'),
+    {
+      message:
+        'WLD bounties require world_pay_transaction_id and world_payment_reference (from MiniKit.pay()).',
+      path: ['world_pay_transaction_id']
     }
   );
 
@@ -64,12 +93,17 @@ bountyRouter.post('/', async (req, res) => {
     return;
   }
 
-  const isXpBounty = parsed.data.reward_xp !== undefined;
+  const rewardKind: 'sol' | 'xp' | 'wld' =
+    parsed.data.reward_wld !== undefined
+      ? 'wld'
+      : parsed.data.reward_xp !== undefined
+        ? 'xp'
+        : 'sol';
 
-  // Always run the AI XP pipeline -- for SOL bounties it gives us the bonus
-  // XP the claimer earns on top of the SOL payout; for XP bounties it gives
-  // us difficulty/importance for transparency (the actual xp_award is
-  // overridden to match the poster's stake so the system isn't gameable).
+  // Always run the AI XP pipeline -- for SOL/WLD bounties it gives us the
+  // bonus XP the claimer earns on top of the on-chain payout; for XP bounties
+  // it gives us difficulty/importance for transparency (the actual xp_award
+  // is overridden to match the poster's stake so the system isn't gameable).
   const xp = await calculateXpReward({
     title: parsed.data.title ?? null,
     description: parsed.data.description,
@@ -79,13 +113,18 @@ bountyRouter.post('/', async (req, res) => {
     lng: parsed.data.lng
   });
 
-  const rewardLamports = isXpBounty
-    ? 0
-    : rewardSolToLamports(parsed.data.reward_sol as number);
+  const rewardLamports =
+    rewardKind === 'sol'
+      ? rewardSolToLamports(parsed.data.reward_sol as number)
+      : 0;
 
   let escrowTxSig: string | null = null;
+  let rewardWldWei: string | null = null;
+  let worldPayTxId: string | null = null;
+  let worldPaymentReference: string | null = null;
+  let worldPayTxHash: string | null = null;
 
-  if (isXpBounty) {
+  if (rewardKind === 'xp') {
     const stake = parsed.data.reward_xp as number;
     const { error: stakeError } = await supabase.rpc('stake_xp', {
       p_user_id: user.id,
@@ -103,7 +142,7 @@ bountyRouter.post('/', async (req, res) => {
       }
       return;
     }
-  } else {
+  } else if (rewardKind === 'sol') {
     try {
       escrowTxSig = await escrowBounty({
         posterId: user.id,
@@ -114,9 +153,51 @@ bountyRouter.post('/', async (req, res) => {
       res.status(500).json({ error: 'Failed to escrow SOL bounty.' });
       return;
     }
+  } else {
+    // WLD bounty escrow: the user already signed `MiniKit.pay()` to our vault
+    // before calling this endpoint. We don't trust their amount/recipient/
+    // reference -- we re-fetch the canonical record from the Developer Portal
+    // and reject the bounty if anything is off. Reference is unique per
+    // bounty (enforced by `bounties_world_payment_reference_uidx`) so a
+    // replayed `transactionId` cannot fund two bounties.
+    try {
+      rewardWldWei = wldToWeiString(parsed.data.reward_wld as number);
+    } catch (err) {
+      res.status(400).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Invalid WLD reward amount.'
+      });
+      return;
+    }
+    worldPayTxId = parsed.data.world_pay_transaction_id as string;
+    worldPaymentReference = parsed.data.world_payment_reference as string;
+
+    try {
+      const verified = await verifyMiniKitPayment({
+        transactionId: worldPayTxId,
+        expectedReference: worldPaymentReference,
+        expectedAmountWei: rewardWldWei
+      });
+      worldPayTxHash = verified.transactionHash || null;
+      // We re-use `escrow_tx_sig` for the on-chain hash in addition to
+      // `world_pay_tx_hash` so legacy queries that surface the escrow
+      // transaction (UI tooltips, postman tests) keep working unmodified.
+      escrowTxSig = worldPayTxHash;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'WLD payment verification failed.';
+      console.warn('WLD escrow verification rejected:', message);
+      res.status(402).json({
+        error: 'WLD payment verification failed.',
+        details: message
+      });
+      return;
+    }
   }
 
-  const xpAward = isXpBounty ? (parsed.data.reward_xp as number) : xp.xp_award;
+  const xpAward = rewardKind === 'xp' ? (parsed.data.reward_xp as number) : xp.xp_award;
 
   const { data: created, error: insertError } = await supabase
     .from('bounties')
@@ -125,8 +206,12 @@ bountyRouter.post('/', async (req, res) => {
       lat: parsed.data.lat,
       lng: parsed.data.lng,
       reward_lamports: rewardLamports,
-      reward_type: isXpBounty ? 'xp' : 'sol',
-      reward_xp: isXpBounty ? (parsed.data.reward_xp as number) : null,
+      reward_type: rewardKind,
+      reward_xp: rewardKind === 'xp' ? (parsed.data.reward_xp as number) : null,
+      reward_wld_wei: rewardWldWei,
+      world_pay_tx_id: worldPayTxId,
+      world_payment_reference: worldPaymentReference,
+      world_pay_tx_hash: worldPayTxHash,
       xp_award: xpAward,
       difficulty_score: xp.difficulty_score,
       importance_score: xp.importance_score,
@@ -143,16 +228,31 @@ bountyRouter.post('/', async (req, res) => {
   if (insertError || !created) {
     // If we already moved value (SOL escrow or XP stake), best-effort roll
     // it back so the user doesn't lose anything to a transient DB blip.
-    if (isXpBounty) {
+    // WLD intentionally has no client-side rollback here -- the funds are
+    // already in the vault and the next operator action is a manual refund
+    // via the WLD vault key (the bounty record never existed, so the
+    // automatic verification-result refund path can't fire). Operators can
+    // grep logs for `WLD escrow orphaned` to find these.
+    if (rewardKind === 'xp') {
       await supabase.rpc('refund_xp', {
         p_user_id: user.id,
         p_amount: parsed.data.reward_xp as number
       });
+    } else if (rewardKind === 'wld') {
+      console.error(
+        `WLD escrow orphaned: poster=${user.id} reference=${
+          worldPaymentReference ?? '?'
+        } tx=${worldPayTxHash ?? '?'} amount_wei=${rewardWldWei ?? '?'}` +
+          ' -- bounty insert failed; manual refund required.'
+      );
     }
     res.status(500).json({
-      error: isXpBounty
-        ? 'Failed to create XP bounty record (stake refunded).'
-        : 'Escrow succeeded but failed to create bounty record.'
+      error:
+        rewardKind === 'xp'
+          ? 'Failed to create XP bounty record (stake refunded).'
+          : rewardKind === 'wld'
+            ? 'WLD payment verified but failed to create bounty record. Operator notified.'
+            : 'Escrow succeeded but failed to create bounty record.'
     });
     return;
   }
@@ -164,6 +264,7 @@ bountyRouter.post('/', async (req, res) => {
       urgency_score: computeUrgencyScore(created)
     },
     escrow_tx_sig: escrowTxSig,
+    world_pay_tx_hash: worldPayTxHash,
     xp_evaluation: {
       xp_award: created.xp_award,
       difficulty_score: xp.difficulty_score,

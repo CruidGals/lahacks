@@ -5,21 +5,42 @@ import { signRequest } from '@worldcoin/idkit-core/signing';
 import { z } from 'zod';
 import { supabase } from '../config/supabase.js';
 import { requireAuthUser } from '../lib/auth.js';
-import { rewardLamportsToSol } from '../lib/bounties.js';
+import { rewardLamportsToSol, rewardWeiToWld } from '../lib/bounties.js';
 
 export const usersRouter = Router();
+
+// 0x-prefixed 20-byte EVM address. World wallets are EOAs on World Chain
+// (chainId 480) so the same regex works as for Ethereum mainnet.
+const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const ethAddressSchema = z
+  .string()
+  .regex(ETH_ADDRESS_RE, 'Invalid Ethereum address')
+  .transform((value) => value.toLowerCase());
 
 const createUserSchema = z.object({
   id: z.string().uuid().optional(),
   wallet_address: z.string().min(1).max(256).optional(),
+  // World wallet is optional on initial registration -- the device may be
+  // outside World App (browser preview) at this point. It's filled in later
+  // via /users/verify or /users/me/world-wallet.
+  world_wallet_address: ethAddressSchema.optional(),
   verified: z.boolean().optional(),
   world_id_hash: z.string().min(1).max(2048).optional()
 });
 
 const verifyWorldIdSchema = z.object({
   world_id_hash: z.string().min(1).max(2048).optional(),
+  // Frontend sends this when the verification is happening inside World App
+  // and `MiniKit.user.walletAddress` is now known. Persisting it here keeps
+  // the WLD payout path (release_wld_bounty) supplied with the right
+  // recipient even if the user never opens the profile screen.
+  world_wallet_address: ethAddressSchema.optional(),
   rp_id: z.string().min(1).optional(),
   idkit_response: z.record(z.string(), z.unknown()).optional()
+});
+
+const linkWorldWalletSchema = z.object({
+  world_wallet_address: ethAddressSchema
 });
 
 const createRpContextSchema = z.object({
@@ -91,6 +112,7 @@ usersRouter.post('/', async (req, res) => {
   const payload = {
     id: parsed.data.id,
     wallet_address: walletAddress,
+    world_wallet_address: parsed.data.world_wallet_address ?? null,
     verified: parsed.data.verified ?? false,
     world_id_hash: parsed.data.world_id_hash ?? null
   };
@@ -168,7 +190,7 @@ usersRouter.get('/me', async (req, res) => {
   const { data: completedBounties, error: completedError } = await supabase
     .from('bounties')
     .select(
-      'id, title, description, reward_lamports, reward_type, reward_xp, xp_award, claimed_at'
+      'id, title, description, reward_lamports, reward_type, reward_xp, reward_wld_wei, xp_award, claimed_at'
     )
     .eq('claimer_id', user.id)
     .eq('status', 'completed')
@@ -206,6 +228,8 @@ usersRouter.get('/me', async (req, res) => {
     reward_type: bounty.reward_type ?? 'sol',
     reward_sol: rewardLamportsToSol(bounty.reward_lamports ?? 0),
     reward_xp: bounty.reward_xp ?? null,
+    reward_wld: rewardWeiToWld(bounty.reward_wld_wei),
+    reward_wld_wei: bounty.reward_wld_wei ?? null,
     xp_award: bounty.xp_award ?? 0,
     completed_at: bounty.claimed_at ?? new Date().toISOString()
   }));
@@ -229,6 +253,27 @@ usersRouter.get('/me', async (req, res) => {
     );
   }
 
+  // Lifetime WLD: uses the same pattern as SOL/XP -- prefer the user-row
+  // counter (transactionally written by the verification handler) but fall
+  // back to summing completed bounties for users that pre-existed the WLD
+  // migration.
+  const wldWeiFromUser = user.total_earned_wld_wei ?? '0';
+  const wldWeiFromCompleted = completed.reduce(
+    (sum, b) =>
+      b.reward_wld_wei && /^[0-9]+$/.test(b.reward_wld_wei)
+        ? sum + BigInt(b.reward_wld_wei)
+        : sum,
+    0n
+  );
+  const wldWeiFromUserBig = /^[0-9]+$/.test(wldWeiFromUser)
+    ? BigInt(wldWeiFromUser)
+    : 0n;
+  const totalEarnedWldWei =
+    wldWeiFromUserBig > wldWeiFromCompleted
+      ? wldWeiFromUserBig
+      : wldWeiFromCompleted;
+  const totalEarnedWld = rewardWeiToWld(totalEarnedWldWei.toString());
+
   res.json({
     user: {
       ...user,
@@ -236,12 +281,15 @@ usersRouter.get('/me', async (req, res) => {
       total_earned_xp: totalEarnedXp,
       total_earned_sol: Number(totalEarnedSol.toFixed(4)),
       total_earned_lamports: totalEarnedLamports,
+      total_earned_wld: totalEarnedWld,
+      total_earned_wld_wei: totalEarnedWldWei.toString(),
       total_completed: completed.length,
       current_streak: activeDays.size,
       wallet: {
         address: user.wallet_address,
         balance_sol: walletBalanceSol
       },
+      world_wallet_address: user.world_wallet_address ?? null,
       recent_completed: recent
     }
   });
@@ -361,18 +409,77 @@ usersRouter.post('/verify', async (req, res) => {
       `world_${user.id}_${Date.now().toString(36)}`;
   }
 
+  // Persist the World wallet (when known) in the same write so the WLD
+  // payout path always has a recipient address by the time the bounty is
+  // verified. We only ever set the column from null/empty -> a real value;
+  // never wipe an existing wallet from a stale verify call.
+  const updatePayload: Record<string, unknown> = {
+    world_id_hash: worldIdHash,
+    verified: true
+  };
+  if (parsed.data.world_wallet_address) {
+    updatePayload.world_wallet_address = parsed.data.world_wallet_address;
+  }
+
   const { data: updated, error } = await supabase
     .from('users')
-    .update({
-      world_id_hash: worldIdHash,
-      verified: true
-    })
+    .update(updatePayload)
     .eq('id', user.id)
     .select('*')
     .single();
 
   if (error || !updated) {
     res.status(500).json({ error: 'Failed to store World ID verification.' });
+    return;
+  }
+
+  res.json({ ok: true, user: updated });
+});
+
+/**
+ * Standalone hook for syncing the user's World wallet address after the
+ * Mini App boots. Worldcoin docs note that `MiniKit.user.walletAddress`
+ * becomes available immediately after `MiniKit.install()` (no signature
+ * required), so we accept the address as a plain string. We deliberately
+ * keep this distinct from the World ID verify endpoint -- a user can have
+ * a World wallet (and therefore receive WLD payouts) without yet having
+ * gone through Orb verification.
+ */
+usersRouter.post('/me/world-wallet', async (req, res) => {
+  const user = await requireAuthUser(req, res);
+  if (!user) return;
+
+  if (!supabase) {
+    res.status(500).json({ error: 'Supabase is not configured.' });
+    return;
+  }
+
+  const parsed = linkWorldWalletSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  // No-op when the address already matches; saves a write and avoids a
+  // pointless `updated_at` bump on every page load.
+  if (
+    user.world_wallet_address &&
+    user.world_wallet_address.toLowerCase() ===
+      parsed.data.world_wallet_address.toLowerCase()
+  ) {
+    res.json({ ok: true, user, idempotent: true });
+    return;
+  }
+
+  const { data: updated, error } = await supabase
+    .from('users')
+    .update({ world_wallet_address: parsed.data.world_wallet_address })
+    .eq('id', user.id)
+    .select('*')
+    .single();
+
+  if (error || !updated) {
+    res.status(500).json({ error: 'Failed to link World wallet.' });
     return;
   }
 

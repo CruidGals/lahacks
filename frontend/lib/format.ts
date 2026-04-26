@@ -9,13 +9,29 @@ export function formatXp(amount: number): string {
   return `${Math.round(amount).toLocaleString()} XP`;
 }
 
+/**
+ * WLD has 18 decimals so we always show 2 fractional digits even when the
+ * integer part is large -- a 0.05 WLD bounty rendered as "0 WLD" would be
+ * wrong. We trim trailing zeros for whole values for cleanliness.
+ */
+export function formatWld(amount: number): string {
+  if (!Number.isFinite(amount)) return "0 WLD";
+  if (amount >= 1000)
+    return `${Math.round(amount).toLocaleString()} WLD`;
+  // toFixed(2) keeps "0.05 WLD" readable; trim "1.00" -> "1" for display.
+  const fixed = amount.toFixed(2);
+  return `${fixed.replace(/\.00$/, "")} WLD`;
+}
+
 export function formatReward(b: {
-  reward_type: "sol" | "xp";
+  reward_type: "sol" | "xp" | "wld";
   reward_sol: number;
   reward_xp: number | null;
+  reward_wld?: number;
   xp_award: number;
 }): string {
   if (b.reward_type === "xp") return formatXp(b.reward_xp ?? b.xp_award);
+  if (b.reward_type === "wld") return formatWld(b.reward_wld ?? 0);
   return formatSol(b.reward_sol);
 }
 

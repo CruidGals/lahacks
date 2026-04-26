@@ -192,6 +192,27 @@ export function SolanaIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/**
+ * Worldcoin "globe with eye" mark, simplified. The official mark is more
+ * intricate, but for inline button-row sizing we just need a recognizable
+ * glyph that distinguishes WLD from SOL/XP.
+ */
+export function WorldcoinIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...base}
+      {...props}
+      stroke="currentColor"
+      strokeWidth="1.6"
+      fill="none"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <ellipse cx="12" cy="12" rx="3.5" ry="9" />
+      <path d="M3 12h18" />
+    </svg>
+  );
+}
+
 export function FireIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...props}>
