@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Card } from "../_components/Card";
 import { Skeleton } from "../_components/Skeleton";
 import { CoinIcon, FireIcon, TrophyIcon } from "../_components/icons";
-import { getLeaderboard } from "../../lib/api";
+import { getCurrentUserId, getLeaderboard } from "../../lib/api";
 import type { LeaderboardEntry, Timeframe } from "../../lib/types";
 
 const TIMEFRAMES: { id: Timeframe; label: string }[] = [
@@ -16,10 +16,15 @@ const TIMEFRAMES: { id: Timeframe; label: string }[] = [
 export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[] | null>(null);
   const [tf, setTf] = useState<Timeframe>("week");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCurrentUserId().then(setCurrentUserId).catch(() => {});
+  }, []);
 
   useEffect(() => {
     setEntries(null);
-    getLeaderboard(tf).then(setEntries);
+    getLeaderboard(tf).then(setEntries).catch(() => setEntries([]));
   }, [tf]);
 
   const top3 = entries?.slice(0, 3) ?? [];
@@ -71,14 +76,30 @@ export default function LeaderboardPage() {
             <Skeleton className="h-40" />
             <Skeleton className="h-28" />
           </div>
-        ) : (
+        ) : entries.length > 0 ? (
           <div className="grid grid-cols-3 gap-2 items-end">
             <Podium entry={top3[1]} place={2} height="h-28" />
             <Podium entry={top3[0]} place={1} height="h-36" />
             <Podium entry={top3[2]} place={3} height="h-24" />
           </div>
-        )}
+        ) : null}
       </div>
+
+      {/* Empty state */}
+      {entries && entries.length === 0 && (
+        <div className="px-4 pt-6">
+          <Card className="p-6 grid place-items-center text-center">
+            <span className="grid place-items-center w-12 h-12 rounded-full bg-[color:var(--color-surface)] text-[color:var(--color-muted)]">
+              <TrophyIcon width={20} height={20} />
+            </span>
+            <p className="text-sm font-semibold mt-3">No rankings yet</p>
+            <p className="text-xs text-[color:var(--color-muted)] mt-1 max-w-[280px]">
+              As soon as people start completing bounties, the leaderboard will
+              fill up here.
+            </p>
+          </Card>
+        </div>
+      )}
 
       {/* List */}
       <div className="px-4 pt-4 pb-4 grid gap-2">
@@ -87,43 +108,46 @@ export default function LeaderboardPage() {
             <Skeleton key={i} className="h-14" />
           ))}
         {entries &&
-          rest.map((e) => (
-            <Card
-              key={e.user_id}
-              className={`px-4 py-3 flex items-center gap-3 ${
-                e.user_id === "user_me"
-                  ? "ring-2 ring-[color:var(--color-brand-200)] bg-[color:var(--color-brand-50)]"
-                  : ""
-              }`}
-            >
-              <span className="w-7 text-sm font-bold tabular text-[color:var(--color-muted)]">
-                {e.rank}
-              </span>
-              <span
-                className="grid place-items-center w-9 h-9 rounded-full text-white text-sm font-bold"
-                style={{ background: e.avatar_color }}
+          rest.map((e) => {
+            const isMe = e.user_id === currentUserId;
+            return (
+              <Card
+                key={e.user_id}
+                className={`px-4 py-3 flex items-center gap-3 ${
+                  isMe
+                    ? "ring-2 ring-[color:var(--color-brand-200)] bg-[color:var(--color-brand-50)]"
+                    : ""
+                }`}
               >
-                {e.handle[0]?.toUpperCase()}
-              </span>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold truncate">
-                  @{e.handle}
-                  {e.user_id === "user_me" && (
-                    <span className="ml-1.5 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-700)]">
-                      you
-                    </span>
-                  )}
-                </p>
-                <p className="text-[11px] text-[color:var(--color-muted)] tabular">
-                  {e.total_completed} cleanups
-                </p>
-              </div>
-              <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
-                <CoinIcon width={14} height={14} />
-                {e.total_earned_sol.toFixed(2)}
-              </span>
-            </Card>
-          ))}
+                <span className="w-7 text-sm font-bold tabular text-[color:var(--color-muted)]">
+                  {e.rank}
+                </span>
+                <span
+                  className="grid place-items-center w-9 h-9 rounded-full text-white text-sm font-bold"
+                  style={{ background: e.avatar_color }}
+                >
+                  {e.handle[0]?.toUpperCase()}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">
+                    @{e.handle}
+                    {isMe && (
+                      <span className="ml-1.5 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-700)]">
+                        you
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-[color:var(--color-muted)] tabular">
+                    {e.total_completed} cleanups
+                  </p>
+                </div>
+                <span className="text-sm font-bold tabular text-[color:var(--color-brand-600)] flex items-center gap-1">
+                  <CoinIcon width={14} height={14} />
+                  {e.total_earned_sol.toFixed(2)}
+                </span>
+              </Card>
+            );
+          })}
       </div>
     </div>
   );

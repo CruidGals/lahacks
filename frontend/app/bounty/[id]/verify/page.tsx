@@ -4,7 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CameraCapture } from "../../../_components/CameraCapture";
 import { getBounty, getSession, submitCleanup } from "../../../../lib/api";
-import type { Bounty, Session, VerificationResult } from "../../../../lib/types";
+import type { Bounty, Session } from "../../../../lib/types";
 import { useToast } from "../../../_components/Toast";
 
 export default function VerifyPage({
@@ -30,37 +30,27 @@ export default function VerifyPage({
     if (!session || !bounty) return;
     setSubmitting(true);
 
-    // Persist what we'd submit so the verifying screen can pick it up.
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        `cleanr.pending.${id}`,
-        JSON.stringify({ session_id: session.id, started_at: Date.now() })
-      );
-    }
-    router.push(`/bounty/${id}/submitted`);
+    try {
+      const { cleanup_id } = await submitCleanup({
+        session_id: session.id,
+        bounty_id: bounty.id,
+        video_blob_url: "",
+        end_lat: bounty.lat,
+        end_lng: bounty.lng,
+        ended_at: new Date().toISOString(),
+      });
 
-    // Fire the actual verification call in the background; the submitted
-    // page polls localStorage for the result.
-    submitCleanup({
-      session_id: session.id,
-      bounty_id: bounty.id,
-      video_blob_url: "blob:fake",
-      end_lat: bounty.lat,
-      end_lng: bounty.lng,
-      ended_at: new Date().toISOString(),
-    })
-      .then((result: { verification: VerificationResult }) => {
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(
-            `cleanr.result.${id}`,
-            JSON.stringify(result.verification)
-          );
-        }
-      })
-      .catch(() => {
-        toast("Verification failed", { variant: "error" });
-      })
-      .finally(() => setSubmitting(false));
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(`cleanr.cleanup.${id}`, cleanup_id);
+      }
+      router.push(`/bounty/${id}/submitted`);
+    } catch (e) {
+      toast("Couldn't submit cleanup", {
+        variant: "error",
+        description: e instanceof Error ? e.message : undefined,
+      });
+      setSubmitting(false);
+    }
   };
 
   if (!session) {
