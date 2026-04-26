@@ -32,6 +32,13 @@ type VerifyV4Response = {
   detail?: string;
 };
 
+function stringifyForWorldVerify(payload: Record<string, unknown>): string {
+  return JSON.stringify(payload, (_key, value) => {
+    if (typeof value === 'bigint') return value.toString();
+    return value;
+  });
+}
+
 function worldEnvMode(): 'production' | 'staging' {
   const configured = process.env.WORLD_ID_ENVIRONMENT?.trim().toLowerCase();
   return configured === 'production' ? 'production' : 'staging';
@@ -258,6 +265,8 @@ usersRouter.get('/:id', async (req, res) => {
 });
 
 usersRouter.post('/verify', async (req, res) => {
+
+  console.log('here1');
   const user = await requireAuthUser(req, res);
   if (!user) return;
 
@@ -290,11 +299,32 @@ usersRouter.post('/verify', async (req, res) => {
       headers.authorization = `Bearer ${developerApiKey}`;
     }
 
-    const verifyRes = await fetch(worldVerifyUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(parsed.data.idkit_response)
-    });
+    let verifyBody: string;
+    try {
+      verifyBody = stringifyForWorldVerify(parsed.data.idkit_response);
+    } catch (error) {
+      res.status(400).json({
+        error: 'Invalid idkit_response payload.',
+        details: error instanceof Error ? error.message : null
+      });
+      return;
+    }
+
+    let verifyRes: Response;
+    try {
+      verifyRes = await fetch(worldVerifyUrl, {
+        method: 'POST',
+        headers,
+        body: verifyBody
+      });
+    } catch (error) {
+      res.status(502).json({
+        error: 'Failed to reach World ID verify API.',
+        details: error instanceof Error ? error.message : null
+      });
+      return;
+    }
+
     const verifyJson = (await verifyRes.json().catch(() => null)) as VerifyV4Response | null;
 
     if (!verifyRes.ok || !verifyJson?.success) {

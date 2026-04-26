@@ -31,6 +31,7 @@ import {
   verifyWorldIdWithProof,
   type ClaimedBounty,
 } from "../../lib/api";
+import { ApiError } from "../../lib/http";
 import type { User } from "../../lib/types";
 import { formatRelative, formatTimeLeft, formatUsd } from "../../lib/format";
 import { useToast } from "../_components/Toast";
@@ -216,10 +217,29 @@ export default function ProfilePage() {
           environment={worldEnvironment}
           preset={orbLegacy({ signal: user?.id ?? "anonymous" })}
           handleVerify={async (result: IDKitResult) => {
-            await verifyWorldIdWithProof({
-              rp_id: rpContext.rp_id,
-              idkit_response: result as unknown as Record<string, unknown>,
-            });
+            try {
+              await verifyWorldIdWithProof({
+                rp_id: rpContext.rp_id,
+                idkit_response: result as unknown as Record<string, unknown>,
+              });
+            } catch (error) {
+              const description =
+                error instanceof ApiError
+                  ? typeof error.body === "object" &&
+                    error.body &&
+                    "details" in error.body &&
+                    (error.body as { details?: unknown }).details
+                    ? JSON.stringify((error.body as { details: unknown }).details)
+                    : error.message
+                  : error instanceof Error
+                    ? error.message
+                    : "Verification request failed";
+              toast("World ID verification failed", {
+                variant: "error",
+                description,
+              });
+              throw error;
+            }
           }}
           onSuccess={() => {
             setVerifyOpen(false);

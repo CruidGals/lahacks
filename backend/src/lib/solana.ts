@@ -11,6 +11,7 @@ import {
 type EscrowParams = {
   bountyId?: string;
   posterId?: string;
+  posterWallet?: string;
   rewardLamports: number;
 };
 
@@ -65,23 +66,56 @@ function getVaultKeypair(): Keypair {
 
 export async function escrowBounty(params: EscrowParams): Promise<string> {
   const connection = getConnection();
-  const funder = getFunderKeypair();
   const vault = getVaultKeypair();
+  const useFunder = process.env.SET_BOUNTY_WITH_FUNDER?.trim().toLowerCase() === 'true';
+  if (!useFunder) {
+    if (!params.posterWallet) {
+      throw new Error('Poster wallet is required when SET_BOUNTY_WITH_FUNDER=false.');
+    }
+
+    const posterPubkey = new PublicKey(params.posterWallet);
+    const posterBalance = await connection.getBalance(posterPubkey, 'confirmed');
+    if (posterBalance < params.rewardLamports + 5_000) {
+      throw new Error(
+        `Poster wallet has insufficient balance for bounty + fees. Required ${
+          params.rewardLamports + 5_000
+        } lamports, found ${posterBalance}.`
+      );
+    }
+
+    throw new Error(
+      `SET_BOUNTY_WITH_FUNDER=false requires a client-signed escrow transfer from poster wallet ${posterPubkey.toBase58()} to vault. Backend cannot debit a wallet from address alone.`
+    );
+  }
+
+  const signer = getFunderKeypair();
+  const signerLabel = 'funder';
+
+  const balance = await connection.getBalance(signer.publicKey, 'confirmed');
+  if (balance < params.rewardLamports + 5_000) {
+    throw new Error(
+      `${signerLabel} wallet has insufficient balance for escrow + fees. Required ${
+        params.rewardLamports + 5_000
+      } lamports, found ${balance}.`
+    );
+  }
 
   const transferIx = SystemProgram.transfer({
-    fromPubkey: funder.publicKey,
+    fromPubkey: signer.publicKey,
     toPubkey: vault.publicKey,
     lamports: params.rewardLamports
   });
 
   const tx = new Transaction().add(transferIx);
-  const signature = await sendAndConfirmTransaction(connection, tx, [funder], {
+  const signature = await sendAndConfirmTransaction(connection, tx, [signer], {
     commitment: 'confirmed'
   });
 
   const bountyLabel = params.bountyId ?? 'pending-db-id';
   const posterLabel = params.posterId ?? 'unknown-poster';
-  console.log(`escrow_bounty bounty_id=${bountyLabel} poster_id=${posterLabel} tx=${signature}`);
+  console.log(
+    `escrow_bounty bounty_id=${bountyLabel} poster_id=${posterLabel} source=${signerLabel} tx=${signature}`
+  );
   return signature;
 }
 
