@@ -200,7 +200,15 @@ class OpenAIPipelineClient:
             # is heavy and we only pay it when we actually need the network.
             from openai import AsyncOpenAI
 
-            self._async_client = AsyncOpenAI(api_key=self._settings.openai_api_key)
+            # Vision calls with 5+ multi-MB frames routinely take 30-60s on
+            # gpt-5-class models. The SDK's default 60s deadline triggers
+            # APITimeoutError mid-flight, so we lift it well above that and
+            # let the SDK's own ``max_retries`` cover transient blips.
+            self._async_client = AsyncOpenAI(
+                api_key=self._settings.openai_api_key,
+                timeout=180.0,
+                max_retries=2,
+            )
         return self._async_client
 
 
