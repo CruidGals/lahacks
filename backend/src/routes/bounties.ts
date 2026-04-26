@@ -18,7 +18,7 @@ const createBountySchema = z.object({
   lng: z.number().min(-180).max(180),
   reward_sol: z.number().positive(),
   description: z.string().min(1).max(2000),
-  reference_video_url: z.url()
+  reference_video_url: z.url().optional().nullable()
 });
 
 const bboxSchema = z.object({
@@ -58,7 +58,7 @@ bountyRouter.post('/', async (req, res) => {
       lng: parsed.data.lng,
       reward_lamports: rewardLamports,
       description: parsed.data.description,
-      reference_video_url: parsed.data.reference_video_url,
+      reference_video_url: parsed.data.reference_video_url ?? null,
       status: 'open'
     })
     .select('*')
@@ -69,17 +69,25 @@ bountyRouter.post('/', async (req, res) => {
     return;
   }
 
-  const escrowTxSig = await escrowBounty({
-    bountyId: inserted.id,
-    posterId: user.id,
-    rewardLamports
-  });
+  let escrowTxSig: string | null = null;
+  try {
+    escrowTxSig = await escrowBounty({
+      bountyId: inserted.id,
+      posterId: user.id,
+      rewardLamports
+    });
+  } catch (e) {
+    console.warn(
+      'escrowBounty failed; bounty created without on-chain escrow:',
+      e instanceof Error ? e.message : e
+    );
+  }
 
   const { data: updated, error: updateError } = await supabase
     .from('bounties')
     .update({ escrow_tx_sig: escrowTxSig })
     .eq('id', inserted.id)
-    .select('*')
+    .select('*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)')
     .single();
 
   if (updateError || !updated) {
@@ -109,9 +117,14 @@ bountyRouter.get('/', async (req, res) => {
     return;
   }
 
-  let query = supabase.from('bounties').select('*').order('created_at', {
-    ascending: false
-  });
+  let query = supabase
+    .from('bounties')
+    .select(
+      '*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)'
+    )
+    .order('created_at', {
+      ascending: false
+    });
 
   if (parsed.data.min_lat !== undefined) {
     query = query.gte('lat', parsed.data.min_lat);
@@ -163,7 +176,9 @@ bountyRouter.get('/:id', async (req, res) => {
 
   const { data: bounty, error } = await supabase
     .from('bounties')
-    .select('*')
+    .select(
+      '*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)'
+    )
     .eq('id', req.params.id)
     .maybeSingle();
 
@@ -237,7 +252,9 @@ bountyRouter.post('/:id/claim', async (req, res) => {
       claimed_at: claimedAt
     })
     .eq('id', bounty.id)
-    .select('*')
+    .select(
+      '*, poster:users!bounties_poster_id_fkey(id, wallet_address, verified)'
+    )
     .single();
 
   if (updateError || !updated) {
@@ -248,6 +265,10 @@ bountyRouter.post('/:id/claim', async (req, res) => {
   res.json({
     message: 'Bounty claimed successfully.',
     claim_expires_at: computeClaimExpiry(claimedAt),
-    bounty: updated
+    bounty: {
+      ...updated,
+      reward_sol: rewardLamportsToSol(updated.reward_lamports),
+      urgency_score: computeUrgencyScore(updated)
+    }
   });
 });
