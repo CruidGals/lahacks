@@ -95,6 +95,16 @@ export default function SubmittedPage({
     }
   }, [result, bounty, toast]);
 
+  // Once verification resolves (pass or fail), clear local flow pointers so
+  // users can cleanly re-claim/restart without stale session state.
+  useEffect(() => {
+    if (!result || typeof window === "undefined") return;
+    window.localStorage.removeItem(`cleanr.session.${id}`);
+    window.localStorage.removeItem(`cleanr.cleanup.${id}`);
+    window.localStorage.removeItem(`cleanr.pending.${id}`);
+    window.localStorage.removeItem(`cleanr.result.${id}`);
+  }, [id, result]);
+
   return (
     <div className="flex-1 flex flex-col">
       <ScreenHeader

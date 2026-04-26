@@ -46,6 +46,11 @@ type VerificationPayload = {
   };
 };
 
+function isVerificationBypassEnabled(): boolean {
+  const raw = process.env.BYPASS_VERIFICATION_FOR_TESTING?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 async function postToAiVerifier(payload: VerificationPayload): Promise<void> {
   const verifyUrl = process.env.AI_VERIFY_URL;
   if (!verifyUrl) {
@@ -292,6 +297,20 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
+  const bypassVerification = isVerificationBypassEnabled();
+  const effectiveResult = bypassVerification
+    ? {
+        ...parsed.data,
+        verified: true,
+        confidence: 1,
+        scene_match: true,
+        task_complete: true,
+        fraud_flags: [] as string[],
+        reasoning:
+          'Verification bypass is enabled for testing; forcing pass result.'
+      }
+    : parsed.data;
+
   const { data: cleanup, error: cleanupError } = await supabase
     .from('cleanups')
     .select('*')
@@ -322,9 +341,9 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
     return;
   }
 
-  const verificationJson = parsed.data as Record<string, unknown>;
+  const verificationJson = effectiveResult as Record<string, unknown>;
 
-  if (parsed.data.verified) {
+  if (effectiveResult.verified) {
     if (cleanup.status === 'verified' && cleanup.payout_tx_sig) {
       res.json({
         ok: true,
@@ -390,7 +409,7 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
         .update({
           status: 'verified',
           verification_result: verificationJson,
-          confidence_score: parsed.data.confidence ?? null,
+          confidence_score: effectiveResult.confidence ?? null,
           payout_tx_sig: payoutTxSig
         })
         .eq('id', cleanup.id),
@@ -489,7 +508,7 @@ cleanupRouter.post('/:id/verification-result', async (req, res) => {
       .update({
         status: 'rejected',
         verification_result: verificationWithRefund,
-        confidence_score: parsed.data.confidence ?? null
+        confidence_score: effectiveResult.confidence ?? null
       })
       .eq('id', cleanup.id),
     supabase
