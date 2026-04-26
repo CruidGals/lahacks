@@ -8,7 +8,6 @@ export type BountyStatus =
 
 export type BountyCategory =
   | "litter"
-  | "graffiti"
   | "illegal_dumping"
   | "park"
   | "beach"

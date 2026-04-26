@@ -60,8 +60,6 @@ function paletteForCategory(c?: string) {
       return { from: "#3b82f6", to: "#22d3ee" };
     case "park":
       return { from: "#16a34a", to: "#84cc16" };
-    case "graffiti":
-      return { from: "#7c3aed", to: "#ec4899" };
     case "illegal_dumping":
       return { from: "#0a0a0a", to: "#374151" };
     case "litter":

@@ -30,7 +30,6 @@ type Step = 1 | 2 | 3 | 4;
 
 const CATEGORIES: { id: BountyCategory; emoji: string; label: string }[] = [
   { id: "litter", emoji: "🧴", label: "Litter" },
-  { id: "graffiti", emoji: "🎨", label: "Graffiti" },
   { id: "illegal_dumping", emoji: "🚮", label: "Dumping" },
   { id: "park", emoji: "🌳", label: "Park" },
   { id: "beach", emoji: "🏖️", label: "Beach" },
@@ -59,6 +58,7 @@ export default function PostBountyPage() {
   const [referenceCaptured, setReferenceCaptured] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<Bounty | null>(null);
+  const [mapRecenterTick, setMapRecenterTick] = useState(0);
 
   useEffect(() => {
     if (geo.location) {
@@ -171,10 +171,37 @@ export default function PostBountyPage() {
           <StepLocation
             pinPos={pinPos}
             mapCenter={mapCenter}
+            mapRecenterTick={mapRecenterTick}
             onPinMove={setPinPos}
             onMapMove={(c) => setMapCenter(c)}
             userLocation={geo.location}
-            onRecenter={() => geo.location && setMapCenter(geo.location)}
+            onRecenter={() => {
+              if (typeof window === "undefined") return;
+              if (!("geolocation" in navigator)) {
+                if (geo.location) {
+                  setMapCenter({ ...geo.location });
+                  setMapRecenterTick((t) => t + 1);
+                }
+                return;
+              }
+              navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                  const next = {
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                  };
+                  setMapCenter(next);
+                  setMapRecenterTick((t) => t + 1);
+                },
+                () => {
+                  if (geo.location) {
+                    setMapCenter({ ...geo.location });
+                    setMapRecenterTick((t) => t + 1);
+                  }
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+              );
+            }}
           />
         )}
         {step === 2 && (
@@ -281,6 +308,7 @@ function Stepper({ step }: { step: Step }) {
 function StepLocation({
   pinPos,
   mapCenter,
+  mapRecenterTick,
   onPinMove,
   onMapMove,
   userLocation,
@@ -288,6 +316,7 @@ function StepLocation({
 }: {
   pinPos: { lat: number; lng: number };
   mapCenter: { lat: number; lng: number };
+  mapRecenterTick: number;
   onPinMove: (p: { lat: number; lng: number }) => void;
   onMapMove: (p: { lat: number; lng: number }) => void;
   userLocation: { lat: number; lng: number } | null;
@@ -312,6 +341,7 @@ function StepLocation({
           <BountyMapClient
             bounties={[]}
             center={mapCenter}
+            recenterTick={mapRecenterTick}
             userLocation={userLocation}
             onPinTap={() => {}}
             draggable

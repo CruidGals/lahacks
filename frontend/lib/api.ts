@@ -184,7 +184,6 @@ function shortWallet(addr: string | null | undefined): string {
 const CATEGORY_TAG_RE = /^#category:(\w+)$/m;
 const VALID_CATEGORIES: BountyCategory[] = [
   "litter",
-  "graffiti",
   "illegal_dumping",
   "park",
   "beach",

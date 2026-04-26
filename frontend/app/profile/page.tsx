@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   IDKitRequestWidget,
   orbLegacy,
@@ -359,6 +360,19 @@ export default function ProfilePage() {
         <Card className="divide-y divide-[color:var(--color-border)]">
           <SettingsRow label="App preferences" hint="Notifications, units, language" />
           <SettingsRow label="Wallet" hint="Connected · Phantom" />
+          <Link
+            href="/login?next=/profile"
+            prefetch
+            className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[color:var(--color-surface)] transition-colors"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">World sign-in</p>
+              <p className="text-[11px] text-[color:var(--color-muted)] truncate">
+                Wallet link, World ID, switch session
+              </p>
+            </div>
+            <span className="text-[color:var(--color-muted-2)]">›</span>
+          </Link>
           <SettingsRow label="Help & feedback" hint="Send a note to our team" />
         </Card>
         <Button

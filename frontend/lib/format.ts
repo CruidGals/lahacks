@@ -73,8 +73,6 @@ export function categoryLabel(c: string): string {
   switch (c) {
     case "litter":
       return "Litter";
-    case "graffiti":
-      return "Graffiti";
     case "illegal_dumping":
       return "Illegal dumping";
     case "park":

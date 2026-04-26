@@ -26,7 +26,6 @@ const STATUS_OPTIONS: Array<{ id: BountyStatus | "all"; label: string }> = [
 const CATEGORY_OPTIONS = [
   "all",
   "litter",
-  "graffiti",
   "illegal_dumping",
   "park",
   "beach",
@@ -50,6 +49,7 @@ export default function MapHome() {
   const [rewardFilter, setRewardFilter] = useState<typeof REWARD_BUCKETS[number]["id"]>("any");
   const [center, setCenter] = useState(DEFAULT_LOCATION);
   const [isRecentering, setIsRecentering] = useState(false);
+  const [recenterTick, setRecenterTick] = useState(0);
 
   useEffect(() => {
     getBounties().then(setBounties);
@@ -88,11 +88,13 @@ export default function MapHome() {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setRecenterTick((t) => t + 1);
           setIsRecentering(false);
         },
         () => {
           // Fallback to last known hook value if available.
           if (geo.location) setCenter({ ...geo.location });
+          setRecenterTick((t) => t + 1);
           setIsRecentering(false);
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -100,7 +102,10 @@ export default function MapHome() {
       return;
     }
 
-    if (geo.location) setCenter({ ...geo.location });
+    if (geo.location) {
+      setCenter({ ...geo.location });
+      setRecenterTick((t) => t + 1);
+    }
   };
 
   const activeFilterCount =
@@ -115,6 +120,7 @@ export default function MapHome() {
         <BountyMapClient
           bounties={filtered}
           center={center}
+          recenterTick={recenterTick}
           userLocation={geo.location}
           onPinTap={setSelectedId}
         />

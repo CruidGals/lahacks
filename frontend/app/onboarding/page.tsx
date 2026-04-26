@@ -93,6 +93,14 @@ export default function OnboardingPage() {
           </Button>
         )}
       </div>
+
+      {(step === "intro" || step === "verify") && (
+        <p className="text-center text-xs text-[color:var(--color-muted)] mt-3">
+          <ButtonLink href="/login?next=/" variant="ghost" size="md" className="!h-auto !py-1 !px-2 !text-xs">
+            Sign in with World
+          </ButtonLink>
+        </p>
+      )}
     </div>
   );
 }

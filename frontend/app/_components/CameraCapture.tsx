@@ -261,8 +261,6 @@ function FakeCameraBackdrop({ category }: { category?: string }) {
         background:
           category === "beach"
             ? "linear-gradient(180deg, #2dd4bf 0%, #fde68a 70%, #f59e0b 100%)"
-            : category === "graffiti"
-            ? "linear-gradient(180deg, #1f2937 0%, #4b5563 100%)"
             : "linear-gradient(180deg, #166534 0%, #65a30d 100%)",
       }}
     />
@@ -276,11 +274,7 @@ function GhostOverlay({ category }: { category?: string }) {
         className="w-[80%] aspect-[16/10] rounded-[24px]"
         style={{
           backgroundImage: `linear-gradient(135deg, ${
-            category === "beach"
-              ? "#bae6fd, #fcd34d"
-              : category === "graffiti"
-              ? "#a78bfa, #f472b6"
-              : "#bbf7d0, #86efac"
+            category === "beach" ? "#bae6fd, #fcd34d" : "#bbf7d0, #86efac"
           })`,
           mixBlendMode: "screen",
         }}

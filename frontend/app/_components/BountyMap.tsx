@@ -2,12 +2,14 @@
 
 import { MapContainer, TileLayer, Marker, useMap } from "react-leaflet";
 import L from "leaflet";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Bounty } from "../../lib/types";
 
 type Props = {
   bounties: Bounty[];
   center: { lat: number; lng: number };
+  /** Increment when the user taps "recenter" so the map flies to `center` even if lat/lng are unchanged. */
+  recenterTick?: number;
   userLocation?: { lat: number; lng: number } | null;
   onPinTap: (id: string) => void;
   draggable?: boolean;
@@ -88,9 +90,25 @@ function MapEvents({
   return null;
 }
 
-function CenterFlyTo({ center }: { center: { lat: number; lng: number } }) {
+function CenterFlyTo({
+  center,
+  recenterTick = 0,
+}: {
+  center: { lat: number; lng: number };
+  recenterTick?: number;
+}) {
   const map = useMap();
+  const lastRecenterTick = useRef(0);
   useEffect(() => {
+    const userRequested =
+      recenterTick > 0 && recenterTick !== lastRecenterTick.current;
+    if (userRequested) {
+      lastRecenterTick.current = recenterTick;
+      map.flyTo([center.lat, center.lng], Math.max(map.getZoom(), 15), {
+        duration: 0.55,
+      });
+      return;
+    }
     // Skip when the map is already at this center (e.g. when the change came
     // from the user panning the map and `onMapMove` echoed it back into
     // state). Without this guard we'd fly back to the same spot on every
@@ -103,7 +121,7 @@ function CenterFlyTo({ center }: { center: { lat: number; lng: number } }) {
       return;
     }
     map.flyTo([center.lat, center.lng], map.getZoom(), { duration: 0.6 });
-  }, [center.lat, center.lng, map]);
+  }, [center.lat, center.lng, map, recenterTick]);
   return null;
 }
 
@@ -130,6 +148,7 @@ function MapInvalidator() {
 export default function BountyMap({
   bounties,
   center,
+  recenterTick,
   userLocation,
   onPinTap,
   draggable,
@@ -201,7 +220,7 @@ export default function BountyMap({
         />
       )}
       <MapEvents onMapMove={onMapMove} />
-      <CenterFlyTo center={center} />
+      <CenterFlyTo center={center} recenterTick={recenterTick} />
       <MapInvalidator />
     </MapContainer>
   );

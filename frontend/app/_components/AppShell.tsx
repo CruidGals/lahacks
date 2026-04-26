@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 
 const HIDDEN_NAV_PREFIXES = [
   "/onboarding",
+  "/login",
   "/bounty/", // detail and inner flow screens get their own chrome
   "/post",
 ];
