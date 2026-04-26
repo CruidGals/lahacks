@@ -26,6 +26,7 @@ export type Database = {
           lng: number
           poster_id: string | null
           reference_video_url: string | null
+          reward_currency: Database["public"]["Enums"]["bounty_currency"]
           reward_lamports: number
           status: Database["public"]["Enums"]["bounty_status"] | null
         }
@@ -40,6 +41,7 @@ export type Database = {
           lng: number
           poster_id?: string | null
           reference_video_url?: string | null
+          reward_currency?: Database["public"]["Enums"]["bounty_currency"]
           reward_lamports: number
           status?: Database["public"]["Enums"]["bounty_status"] | null
         }
@@ -54,6 +56,7 @@ export type Database = {
           lng?: number
           poster_id?: string | null
           reference_video_url?: string | null
+          reward_currency?: Database["public"]["Enums"]["bounty_currency"]
           reward_lamports?: number
           status?: Database["public"]["Enums"]["bounty_status"] | null
         }
@@ -208,6 +211,7 @@ export type Database = {
           id: string
           verified: boolean | null
           wallet_address: string
+          world_address: string | null
           world_id_hash: string | null
         }
         Insert: {
@@ -215,6 +219,7 @@ export type Database = {
           id?: string
           verified?: boolean | null
           wallet_address: string
+          world_address?: string | null
           world_id_hash?: string | null
         }
         Update: {
@@ -222,6 +227,7 @@ export type Database = {
           id?: string
           verified?: boolean | null
           wallet_address?: string
+          world_address?: string | null
           world_id_hash?: string | null
         }
         Relationships: []
@@ -234,6 +240,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      bounty_currency: "WLD" | "SOL"
       bounty_status: "open" | "claimed" | "completed" | "expired"
       cleanup_status: "pending" | "verified" | "rejected"
       session_status: "active" | "completed" | "cancelled"
@@ -364,6 +371,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      bounty_currency: ["WLD", "SOL"],
       bounty_status: ["open", "claimed", "completed", "expired"],
       cleanup_status: ["pending", "verified", "rejected"],
       session_status: ["active", "completed", "cancelled"],
